@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <script type="text/javascript" src="elm.js"></script>
 <style type="text/css">
+body {
+    background-color: white;
+    color: black;
+}
 .spades, .clubs {
     color: black;
 }
@@ -19,15 +23,19 @@
 .cascade {
     display: flex;
     margin: 0 0.2em;
-    flex-direction: column-reverse;
+    flex-direction: column;
     justify-content: start;
 }
 .card {
     display: inline-block;
     width: 2.5em;
-    padding: 0.1em 0.2em;
+    padding: 0.1em 0.2em 1.1em 0.2em;
     border: 0.1em solid gray;
     border-radius: 0.4em;
+    background-color: white;
+}
+.cascade .card {
+    margin-bottom: -1em;
 }
 .foundations .hovered, .freeCells .hovered {
     background-color: gray;
@@ -35,7 +43,7 @@
 .ghost {
     opacity: 75%;
 }
-.source {
+.cascade .source {
     background-color: yellow;
 }
 </style>

@@ -120,7 +120,7 @@ view { game, errors, drag } =
       in
       Html.div
         (Attributes.class "cascade" :: targetAttrs loc)
-        cascadeOrSlot
+        (List.reverse cascadeOrSlot)
   in
   { title = "FreeCell"
   , body =

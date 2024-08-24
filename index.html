@@ -14,11 +14,13 @@
     margin-top: 0.4em;
     display: flex;
     flex-direction: row;
+    align-items: stretch;
 }
 .cascade {
     display: flex;
     margin: 0 0.2em;
-    flex-direction: column;
+    flex-direction: column-reverse;
+    justify-content: start;
 }
 .card {
     display: inline-block;
@@ -26,6 +28,15 @@
     padding: 0.1em 0.2em;
     border: 0.1em solid gray;
     border-radius: 0.4em;
+}
+.foundations .hovered, .freeCells .hovered {
+    background-color: gray;
+}
+.ghost {
+    opacity: 75%;
+}
+.source {
+    background-color: yellow;
 }
 </style>
 <title>FreeCell</title>

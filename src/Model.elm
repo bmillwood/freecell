@@ -3,11 +3,16 @@ module Model exposing (..)
 import Array exposing (Array)
 import Random
 
+import Drag
+
 type Suit
   = Spades
   | Hearts
   | Diamonds
   | Clubs
+
+isRed : Suit -> Bool
+isRed suit = suit == Hearts || suit == Diamonds
 
 type alias Card = { suit : Suit, rank : Int }
 
@@ -68,18 +73,60 @@ cascadesOfDeck numCascades cards =
   in
   List.foldl add (Array.repeat numCascades []) cards
 
+sequenceCompatible : Card -> Card -> Bool
+sequenceCompatible src dst =
+  isRed src.suit /= isRed dst.suit && src.rank + 1 == dst.rank
+
+initialSequenceLength : List Card -> Int
+initialSequenceLength cards =
+  case cards of
+    [] -> 0
+    [_] -> 1
+    c1 :: c2 :: rest ->
+      if sequenceCompatible c1 c2
+      then 1 + initialSequenceLength (c2 :: rest)
+      else 1
+
+type Location
+  = Foundation Int
+  | FreeCell Int
+  | Cascade Int
+
 type alias Model =
-  { game : Game
-  , errors : List String
+  { errors : List String
+  , game : Game
+  , drag : Drag.Model (Location, Int) Location
   }
 
 gameOfDeck : List Card -> Game
 gameOfDeck cards = { emptyGame | cascades = cascadesOfDeck 8 cards }
 
+type alias DragMsg = Drag.Msg (Location, Int) Location
+
+cardsFromSource : Game -> (Location, Int) -> List Card
+cardsFromSource game (loc, count) =
+  case loc of
+    Foundation i ->
+      case Array.get i game.foundations of
+        Nothing -> []
+        Just card ->
+          if card.rank == 0
+          then []
+          else [card]
+    FreeCell i ->
+      case Array.get i game.freeCells |> Maybe.andThen identity of
+        Nothing -> []
+        Just card -> [card]
+    Cascade i ->
+      case Array.get i game.cascades of
+        Nothing -> []
+        Just cards -> List.take count cards
+
 type OneMsg
-  = RequestNewGame
+  = AddError String
+  | RequestNewGame
   | SetGame Game
-  | AddError String
+  | Drag DragMsg
 
 type alias Msg = List OneMsg
 
@@ -88,16 +135,99 @@ newGameCmd = Random.generate (List.singleton << SetGame << gameOfDeck) genDeck
 
 init : () -> (Model, Cmd Msg)
 init () =
-  ( { game = emptyGame, errors = [] }
+  ( { game = emptyGame, errors = [], drag = Drag.init }
   , newGameCmd
   )
+
+removeFromSource : (Location, Int) -> Game -> Game
+removeFromSource (src, count) game =
+  case src of
+    Foundation i ->
+      case Array.get i game.foundations of
+        Nothing -> game
+        Just f ->
+          { game
+          | foundations = Array.set i { f | rank = f.rank - 1 } game.foundations
+          }
+    FreeCell i -> { game | freeCells = Array.set i Nothing game.freeCells }
+    Cascade i ->
+      case Array.get i game.cascades of
+        Nothing -> game
+        Just cards ->
+          { game | cascades = Array.set i (List.drop count cards) game.cascades }
+
+numEmptyFreeCells : Game -> Int
+numEmptyFreeCells game =
+  let
+    f fc acc =
+      case fc of
+        Just _ -> acc
+        Nothing -> acc + 1
+  in
+  Array.foldl f 0 game.freeCells
+
+tryMove : (Location, Int) -> Location -> Game -> Game
+tryMove (src, count) dst game =
+  if src == dst || count > numEmptyFreeCells game + 1
+  then game
+  else
+    let
+      moveCards = cardsFromSource game (src, count)
+      topCard = List.foldl (always << Just) Nothing moveCards
+    in
+    case dst of
+      Foundation i ->
+        case (Array.get i game.foundations, moveCards) of
+          (Just f, [card]) ->
+            if card.suit == f.suit && card.rank == f.rank + 1
+            then
+              { game
+              | foundations = Array.set i card game.foundations
+              } |> removeFromSource (src, count)
+            else game
+          _ -> game
+      FreeCell i ->
+        case (Array.get i game.freeCells, moveCards) of
+          (Just Nothing, [card]) ->
+            { game
+            | freeCells = Array.set i (Just card) game.freeCells
+            } |> removeFromSource (src, count)
+          _ -> game
+      Cascade i ->
+        case (Array.get i game.cascades, topCard) of
+          (_, Nothing) -> game
+          (Just cascade, Just srcLink) ->
+            let
+              compatible =
+                case List.head cascade of
+                  Nothing -> True
+                  Just dstLink -> sequenceCompatible srcLink dstLink
+            in
+            if compatible
+            then
+              { game
+              | cascades = Array.set i (moveCards ++ cascade) game.cascades
+              } |> removeFromSource (src, count)
+            else game
+          (Nothing, Just _) -> game
 
 updateOne : OneMsg -> Model -> (Model, Cmd Msg)
 updateOne msg model =
   case msg of
+    AddError new -> ({ model | errors = new :: model.errors }, Cmd.none)
     SetGame game -> ({ model | game = game }, Cmd.none)
     RequestNewGame -> (model, newGameCmd)
-    AddError new -> ({ model | errors = new :: model.errors }, Cmd.none)
+    Drag dragMsg ->
+      ( { model
+        | drag = Drag.update dragMsg model.drag
+        , game =
+            case (model.drag, dragMsg) of
+              (Just { held }, Drag.Drop (Just target)) ->
+                tryMove held target model.game
+              _ -> model.game
+        }
+      , Cmd.none
+      )
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update ones originalModel =

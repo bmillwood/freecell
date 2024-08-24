@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<script type="text/javascript" src="elm.js"></script>
+<style type="text/css">
+.spades, .clubs {
+    color: black;
+}
+.hearts, .diamonds {
+    color: red;
+}
+.cascades {
+    margin-top: 0.4em;
+    display: flex;
+    flex-direction: row;
+}
+.cascade {
+    display: flex;
+    margin: 0 0.2em;
+    flex-direction: column;
+}
+.card {
+    display: inline-block;
+    width: 2.5em;
+    padding: 0.1em 0.2em;
+    border: 0.1em solid gray;
+    border-radius: 0.4em;
+}
+</style>
+<title>FreeCell</title>
+</head>
+<body>
+<div id="elm"></div>
+<script type="text/javascript">
+var app = Elm.Main.init({
+    node: document.getElementById('elm'),
+});
+</script>
+</body>
+</html>

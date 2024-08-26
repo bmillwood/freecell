@@ -94,7 +94,7 @@ type Location
 
 type alias Model =
   { errors : List String
-  , game : Game
+  , history : List Game
   , drag : Drag.Model (Location, Int) Location
   }
 
@@ -127,6 +127,7 @@ type OneMsg
   | RequestNewGame
   | SetGame Game
   | Drag DragMsg
+  | Undo
 
 type alias Msg = List OneMsg
 
@@ -135,7 +136,7 @@ newGameCmd = Random.generate (List.singleton << SetGame << gameOfDeck) genDeck
 
 init : () -> (Model, Cmd Msg)
 init () =
-  ( { game = emptyGame, errors = [], drag = Drag.init }
+  ( { history = [], errors = [], drag = Drag.init }
   , newGameCmd
   )
 
@@ -215,19 +216,20 @@ updateOne : OneMsg -> Model -> (Model, Cmd Msg)
 updateOne msg model =
   case msg of
     AddError new -> ({ model | errors = new :: model.errors }, Cmd.none)
-    SetGame game -> ({ model | game = game }, Cmd.none)
+    SetGame game -> ({ model | history = game :: model.history }, Cmd.none)
     RequestNewGame -> (model, newGameCmd)
     Drag dragMsg ->
       ( { model
         | drag = Drag.update dragMsg model.drag
-        , game =
-            case (model.drag, dragMsg) of
-              (Just { held }, Drag.Drop (Just target)) ->
-                tryMove held target model.game
-              _ -> model.game
+        , history =
+            case (model.history, model.drag, dragMsg) of
+              (game :: _, Just { held }, Drag.Drop (Just target)) ->
+                tryMove held target game :: model.history
+              _ -> model.history
         }
       , Cmd.none
       )
+    Undo -> ({ model | history = List.drop 1 model.history }, Cmd.none)
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update ones originalModel =

@@ -37,8 +37,12 @@ embedDragAttrs : List (Html.Attribute Model.DragMsg) -> List (Html.Attribute Msg
 embedDragAttrs = List.map (Attributes.map (List.singleton << Model.Drag))
 
 view : Model -> Browser.Document Msg
-view { game, errors, drag } =
+view { history, errors, drag } =
   let
+    game =
+      case history of
+        [] -> Model.emptyGame
+        latest :: _ -> latest
     { foundations, freeCells, cascades } = game
     targetAttrs loc =
       [ if Maybe.andThen .over drag == Just loc
@@ -125,6 +129,12 @@ view { game, errors, drag } =
   { title = "FreeCell"
   , body =
       [ Html.div
+          []
+          [ Html.button
+              [ Events.onClick [Model.Undo] ]
+              [ Html.text "undo" ]
+          ]
+      , Html.div
           [ Attributes.class "foundations" ]
           (Array.toList foundations |> List.indexedMap viewFoundation)
       , Html.div

@@ -138,6 +138,9 @@ view { history, errors, drag } =
       [ Html.div
           []
           [ Html.button
+              [ Events.onClick [Model.RequestNewGame] ]
+              [ Html.text "restart" ]
+          , Html.button
               [ Events.onClick [Model.Undo] ]
               [ Html.text "undo" ]
           ]

@@ -145,15 +145,6 @@ view { history, errors, drag, touchConfig } =
   { title = "FreeCell"
   , body =
       [ Html.div
-          []
-          [ Html.button
-              [ Events.onClick [Model.RequestNewGame] ]
-              [ Html.text "restart" ]
-          , Html.button
-              [ Events.onClick [Model.Undo] ]
-              [ Html.text "undo" ]
-          ]
-      , Html.div
           [ Attributes.class "foundations" ]
           (Array.toList foundations |> List.indexedMap viewFoundation)
       , Html.div
@@ -162,6 +153,16 @@ view { history, errors, drag, touchConfig } =
       , Html.div
           [ Attributes.class "cascades" ]
           (List.indexedMap viewCascade (Array.toList cascades))
+      , Html.hr [] []
+      , Html.div
+          []
+          [ Html.button
+              [ Events.onClick [Model.RequestNewGame] ]
+              [ Html.text "restart" ]
+          , Html.button
+              [ Events.onClick [Model.Undo] ]
+              [ Html.text "undo" ]
+          ]
       , Html.ul
           [ Attributes.class "errors" ]
           (List.map (Html.li [] << List.singleton << Html.text) errors)

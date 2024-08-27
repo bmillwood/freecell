@@ -37,7 +37,7 @@ embedDragAttrs : List (Html.Attribute Model.DragMsg) -> List (Html.Attribute Msg
 embedDragAttrs = List.map (Attributes.map (List.singleton << Model.Drag))
 
 view : Model -> Browser.Document Msg
-view { history, errors, drag } =
+view { history, errors, drag, touchConfig } =
   let
     game =
       case history of
@@ -59,7 +59,17 @@ view { history, errors, drag } =
     cardAttrs = [ Attributes.class "card" ]
     sourceAttrs source =
       [ [ Attributes.class "source" ]
-      , embedDragAttrs (Drag.sourceAttributes source)
+      , embedDragAttrs (Drag.sourceAttributes source touchConfig)
+      , case drag of
+          Just { held } ->
+            let
+              (heldLoc, heldCount) = held
+              (ourLoc, ourPos) = source
+            in
+            if heldLoc == ourLoc && ourPos <= heldCount
+            then [ Attributes.class "ghost" ]
+            else []
+          _ -> []
       ] |> List.concat
     cardContents c = [ Html.text (rankText c.rank), viewSuit c.suit ]
     viewFoundation i c =
@@ -67,6 +77,7 @@ view { history, errors, drag } =
         loc = Model.Foundation i
         attrs =
           [ cardAttrs
+          , [ Attributes.id (Model.idForLocation loc) ]
           , if c.rank > 0 then sourceAttrs (loc, 1) else []
           , targetIfOne loc
           ] |> List.concat
@@ -77,12 +88,15 @@ view { history, errors, drag } =
         (cardAttrs ++ extraAttrs)
         [ Html.text nbsp ]
     viewFreeCell i fc =
-      let loc = Model.FreeCell i in
+      let
+        loc = Model.FreeCell i
+        idAttr = Attributes.id (Model.idForLocation loc)
+      in
       case fc of
-        Nothing -> emptyCard (targetIfOne loc)
+        Nothing -> emptyCard (idAttr :: targetIfOne loc)
         Just c ->
           Html.span
-            (cardAttrs ++ sourceAttrs (loc, 1))
+            (idAttr :: cardAttrs ++ sourceAttrs (loc, 1))
             (cardContents c)
     cardsFromSource =
       case drag of
@@ -113,13 +127,6 @@ view { history, errors, drag } =
               , if j < moveable
                 then sourceAttrs (loc, j + 1)
                 else []
-              , case drag of
-                  Just { held } ->
-                    let (srcLoc, count) = held in
-                    if srcLoc == loc && j < count
-                    then [ Attributes.class "ghost" ]
-                    else []
-                  _ -> []
               ] |> List.concat
           in
           Html.span attrs (cardContents c)
@@ -130,7 +137,9 @@ view { history, errors, drag } =
           else cascadeWithGhosts
       in
       Html.div
-        (Attributes.class "cascade" :: targetAttrs loc)
+        (Attributes.class "cascade"
+          :: Attributes.id (Model.idForLocation loc)
+          :: targetAttrs loc)
         (List.reverse cascadeOrSlot)
   in
   { title = "FreeCell"

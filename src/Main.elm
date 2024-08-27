@@ -113,6 +113,13 @@ view { history, errors, drag } =
               , if j < moveable
                 then sourceAttrs (loc, j + 1)
                 else []
+              , case drag of
+                  Just { held } ->
+                    let (srcLoc, count) = held in
+                    if srcLoc == loc && j < count
+                    then [ Attributes.class "ghost" ]
+                    else []
+                  _ -> []
               ] |> List.concat
           in
           Html.span attrs (cardContents c)

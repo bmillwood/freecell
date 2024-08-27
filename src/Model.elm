@@ -96,7 +96,6 @@ type alias Model =
   { errors : List String
   , history : List Game
   , drag : Drag.Model (Location, Int) Location
-  , touchConfig : Maybe (Drag.TouchConfig Location)
   }
 
 gameOfDeck : List Card -> Game
@@ -128,7 +127,6 @@ type OneMsg
   | RequestNewGame
   | SetGame Game
   | Drag DragMsg
-  | SetTouchConfig (Maybe (Drag.TouchConfig Location))
   | Undo
 
 type alias Msg = List OneMsg
@@ -138,7 +136,7 @@ newGameCmd = Random.generate (List.singleton << SetGame << gameOfDeck) genDeck
 
 init : () -> (Model, Cmd Msg)
 init () =
-  ( { history = [], errors = [], drag = Drag.init, touchConfig = Nothing }
+  ( { history = [], errors = [], drag = Drag.init }
   , newGameCmd
   )
 
@@ -228,13 +226,13 @@ allLocations game =
   , List.indexedMap (\i _ -> Cascade i) (Array.toList game.cascades)
   ] |> List.concat
 
-buildTouchConfig : Game -> Cmd Msg
-buildTouchConfig game =
+setTouchConfig : Game -> Cmd Msg
+setTouchConfig game =
   let
     allTargetIds = List.map (\l -> (idForLocation l, l)) (allLocations game)
   in
-  Drag.buildTouchConfig { allTargetIds = allTargetIds }
-  |> Cmd.map (List.singleton << SetTouchConfig << Just)
+  Drag.setTouchConfig { allTargetIds = allTargetIds }
+  |> Cmd.map (List.singleton << Drag)
 
 updateOne : OneMsg -> Model -> (Model, Cmd Msg)
 updateOne msg model =
@@ -242,14 +240,14 @@ updateOne msg model =
     AddError new -> ({ model | errors = new :: model.errors }, Cmd.none)
     SetGame game ->
       ( { model | history = game :: model.history }
-      , buildTouchConfig game
+      , setTouchConfig game
       )
     RequestNewGame -> (model, newGameCmd)
     Drag dragMsg ->
       let
         newGame =
-          case (model.history, model.drag, dragMsg) of
-            (game :: _, Just { held }, Drag.Drop (Just target)) ->
+          case (model.history, Drag.held model.drag, dragMsg) of
+            (game :: _, Just held, Drag.Drop (Just target)) ->
               Just (tryMove held target game)
             _ -> Nothing
       in
@@ -262,9 +260,8 @@ updateOne msg model =
         }
       , case newGame of
           Nothing -> Cmd.none
-          Just g -> buildTouchConfig g
+          Just g -> setTouchConfig g
       )
-    SetTouchConfig mtc -> ({ model | touchConfig = mtc }, Cmd.none)
     Undo -> ({ model | history = List.drop 1 model.history }, Cmd.none)
 
 update : Msg -> Model -> (Model, Cmd Msg)

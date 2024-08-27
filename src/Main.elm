@@ -37,7 +37,7 @@ embedDragAttrs : List (Html.Attribute Model.DragMsg) -> List (Html.Attribute Msg
 embedDragAttrs = List.map (Attributes.map (List.singleton << Model.Drag))
 
 view : Model -> Browser.Document Msg
-view { history, errors, drag, touchConfig } =
+view { history, errors, drag } =
   let
     game =
       case history of
@@ -45,23 +45,23 @@ view { history, errors, drag, touchConfig } =
         latest :: _ -> latest
     { foundations, freeCells, cascades } = game
     targetAttrs loc =
-      [ if Maybe.andThen .over drag == Just loc
+      [ if Drag.over drag == Just loc
         then [ Attributes.class "hovered" ]
         else []
       , embedDragAttrs (Drag.targetAttributes loc)
       ] |> List.concat
     targetIfOne loc =
-      case drag of
+      case Drag.held drag of
         Nothing -> []
-        Just { held } ->
+        Just held ->
           let (_, count) = held in
           if count == 1 then targetAttrs loc else []
     cardAttrs = [ Attributes.class "card" ]
     sourceAttrs source =
       [ [ Attributes.class "source" ]
-      , embedDragAttrs (Drag.sourceAttributes source touchConfig)
-      , case drag of
-          Just { held } ->
+      , embedDragAttrs (Drag.sourceAttributes source drag)
+      , case Drag.held drag of
+          Just held ->
             let
               (heldLoc, heldCount) = held
               (ourLoc, ourPos) = source
@@ -99,9 +99,9 @@ view { history, errors, drag, touchConfig } =
             (idAttr :: cardAttrs ++ sourceAttrs (loc, 1))
             (cardContents c)
     cardsFromSource =
-      case drag of
+      case Drag.held drag of
         Nothing -> []
-        Just { held } -> Model.cardsFromSource game held
+        Just held -> Model.cardsFromSource game held
     ghostCards loc =
       let
         ghostCard c =
@@ -109,7 +109,7 @@ view { history, errors, drag, touchConfig } =
             (cardAttrs ++ [ Attributes.class "ghost" ])
             (cardContents c)
       in
-      case drag of
+      case Drag.heldOver drag of
         Nothing -> []
         Just { held, over } ->
           let (srcLoc, _) = held in

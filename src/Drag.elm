@@ -1,32 +1,55 @@
-module Drag exposing (..)
+module Drag exposing
+  ( Model
+  , held, over, heldOver, HeldOver
+  , init
+  , Msg(..), update
+  , setTouchConfig
+  , sourceAttributes, targetAttributes
+  )
 
 import Browser.Dom
 import Html exposing (Html)
 import Html.Attributes as Attributes
 import Html.Events as Events
 import Json.Decode
+import Maybe
 import Task
 
-type alias Model source target =
+type alias HeldOver source target =
   Maybe
     { held : source
     , over : Maybe target
     }
 
+type alias Touch = { pageX : Float, pageY : Float }
+
+type alias TouchConfig target = { getTarget : Touch -> Maybe target }
+
+type alias Model source target =
+  { heldOver : HeldOver source target
+  , touchConfig : Maybe (TouchConfig target)
+  }
+
+held : Model s t -> Maybe s
+held model = Maybe.map .held model.heldOver
+
+over : Model s t -> Maybe t
+over model = Maybe.andThen .over model.heldOver
+
+heldOver : Model s t -> HeldOver s t
+heldOver = .heldOver
+
 init : Model source target
-init = Nothing
+init = { heldOver = Nothing, touchConfig = Nothing }
 
 type Msg source target
   = Start source
   | Hover (Maybe target)
   | Drop (Maybe target)
+  | SetTouchConfig (Maybe (TouchConfig target))
 
-type alias Touch = { pageX : Float, pageY : Float }
-
-type alias TouchConfig target = { getTarget : Touch -> Maybe target }
-
-buildTouchConfig : { allTargetIds : List (String, target) } -> Cmd (TouchConfig target)
-buildTouchConfig { allTargetIds } =
+setTouchConfig : { allTargetIds : List (String, target) } -> Cmd (Msg source target)
+setTouchConfig { allTargetIds } =
   let
     tryTask t = Task.map Just t |> Task.onError (\_ -> Task.succeed Nothing)
     add target maybeElt acc =
@@ -46,7 +69,7 @@ buildTouchConfig { allTargetIds } =
     (\(id, tg) accT -> Task.map2 (add tg) (tryTask (Browser.Dom.getElement id)) accT)
     (Task.succeed [])
     allTargetIds
-  |> Task.perform (\xs -> { getTarget = getTarget xs })
+  |> Task.perform (\xs -> SetTouchConfig (Just { getTarget = getTarget xs }))
 
 decodeTouch : Json.Decode.Decoder Touch
 decodeTouch =
@@ -58,12 +81,12 @@ decodeTouchEvent : Json.Decode.Decoder Touch
 decodeTouchEvent = Json.Decode.at ["changedTouches", "0"] decodeTouch
 
 sourceAttributes
-  : source -> Maybe (TouchConfig target) -> List (Html.Attribute (Msg source target))
-sourceAttributes source touch =
+  : source -> Model source target -> List (Html.Attribute (Msg source target))
+sourceAttributes source { touchConfig } =
   [ Attributes.draggable "true"
   , Events.on "dragstart" (Json.Decode.succeed (Start source))
   , Events.on "dragend" (Json.Decode.succeed (Drop Nothing))
-  ] ++ case touch of
+  ] ++ case touchConfig of
     Nothing -> []
     Just { getTarget } ->
       [ Events.preventDefaultOn "touchstart" (Json.Decode.succeed (Start source, True))
@@ -81,8 +104,9 @@ targetAttributes target =
 
 update : Msg s t -> Model s t -> Model s t
 update msg model =
-  case (msg, model) of
-    (Start source, _) -> Just { held = source, over = Nothing }
-    (_, Nothing) -> Nothing
-    (Hover target, Just ho) -> Just { ho | over = target }
-    (Drop _, _) -> Nothing
+  case (msg, model.heldOver) of
+    (SetTouchConfig config, _) -> { model | touchConfig = config }
+    (Start source, _) -> { model | heldOver = Just { held = source, over = Nothing } }
+    (_, Nothing) -> { model | heldOver = Nothing }
+    (Hover target, Just ho) -> { model | heldOver = Just { ho | over = target } }
+    (Drop _, _) -> { model | heldOver = Nothing }

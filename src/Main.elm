@@ -37,30 +37,38 @@ embedDragAttrs : List (Html.Attribute Model.DragMsg) -> List (Html.Attribute Msg
 embedDragAttrs = List.map (Attributes.map (List.singleton << Model.Drag))
 
 view : Model -> Browser.Document Msg
-view { history, errors, drag } =
+view model =
   let
     game =
-      case history of
+      case model.history of
         [] -> Model.emptyGame
         latest :: _ -> latest
     { foundations, freeCells, cascades } = game
     targetAttrs loc =
-      [ if Drag.over drag == Just loc
+      [ if Drag.over model.drag == Just loc
         then [ Attributes.class "hovered" ]
         else []
       , embedDragAttrs (Drag.targetAttributes loc)
       ] |> List.concat
     targetIfOne loc =
-      case Drag.held drag of
+      case Drag.held model.drag of
         Nothing -> []
         Just held ->
           let (_, count) = held in
           if count == 1 then targetAttrs loc else []
     cardAttrs = [ Attributes.class "card" ]
+    highlightFoundation card =
+      if model.highlightFoundation
+      then
+        let acceptsMe t = t.suit == card.suit && t.rank == card.rank - 1 in
+        if Array.isEmpty (Array.filter acceptsMe game.foundations)
+        then []
+        else [ Attributes.class "canFoundation" ]
+      else []
     sourceAttrs source =
-      [ [ Attributes.class "source" ]
-      , embedDragAttrs (Drag.sourceAttributes source drag)
-      , case Drag.held drag of
+      [ if model.highlightSeq then [ Attributes.class "source" ] else []
+      , embedDragAttrs (Drag.sourceAttributes source model.drag)
+      , case Drag.held model.drag of
           Just held ->
             let
               (heldLoc, heldCount) = held
@@ -96,10 +104,10 @@ view { history, errors, drag } =
         Nothing -> emptyCard (idAttr :: targetIfOne loc)
         Just c ->
           Html.span
-            (idAttr :: cardAttrs ++ sourceAttrs (loc, 1))
+            (idAttr :: cardAttrs ++ highlightFoundation c ++ sourceAttrs (loc, 1))
             (cardContents c)
     cardsFromSource =
-      case Drag.held drag of
+      case Drag.held model.drag of
         Nothing -> []
         Just held -> Model.cardsFromSource game held
     ghostCards loc =
@@ -109,7 +117,7 @@ view { history, errors, drag } =
             (cardAttrs ++ [ Attributes.class "ghost" ])
             (cardContents c)
       in
-      case Drag.heldOver drag of
+      case Drag.heldOver model.drag of
         Nothing -> []
         Just { held, over } ->
           let (srcLoc, _) = held in
@@ -124,6 +132,7 @@ view { history, errors, drag } =
           let
             attrs =
               [ cardAttrs
+              , highlightFoundation c
               , if j < moveable
                 then sourceAttrs (loc, j + 1)
                 else []
@@ -141,6 +150,18 @@ view { history, errors, drag } =
           :: Attributes.id (Model.idForLocation loc)
           :: targetAttrs loc)
         (List.reverse cascadeOrSlot)
+    checkbox id isChecked onCheck text =
+      Html.label
+        [ Attributes.for id ]
+        [ Html.input
+            [ Attributes.type_ "checkbox"
+            , Attributes.id id
+            , Attributes.checked isChecked
+            , Events.onCheck onCheck
+            ]
+            []
+        , Html.text text
+        ]
   in
   { title = "FreeCell"
   , body =
@@ -163,9 +184,29 @@ view { history, errors, drag } =
               [ Events.onClick [Model.Undo] ]
               [ Html.text "undo" ]
           ]
+      , Html.p
+          []
+          [ Html.text "highlight:"
+          , Html.ul []
+              [ Html.li []
+                  [ checkbox
+                      "highlightSeq"
+                      model.highlightSeq
+                      (List.singleton << Model.SetHighlightSeq)
+                      "sequences"
+                  ]
+              , Html.li []
+                  [ checkbox
+                      "highlightFoundation"
+                      model.highlightFoundation
+                      (List.singleton << Model.SetHighlightFoundation)
+                      "next foundation"
+                  ]
+              ]
+          ]
       , Html.ul
           [ Attributes.class "errors" ]
-          (List.map (Html.li [] << List.singleton << Html.text) errors)
+          (List.map (Html.li [] << List.singleton << Html.text) model.errors)
       ]
   }
 

@@ -96,6 +96,8 @@ type alias Model =
   { errors : List String
   , history : List Game
   , drag : Drag.Model (Location, Int) Location
+  , highlightSeq : Bool
+  , highlightFoundation : Bool
   }
 
 gameOfDeck : List Card -> Game
@@ -127,6 +129,8 @@ type OneMsg
   | RequestNewGame
   | SetGame Game
   | Drag DragMsg
+  | SetHighlightSeq Bool
+  | SetHighlightFoundation Bool
   | Undo
 
 type alias Msg = List OneMsg
@@ -136,7 +140,12 @@ newGameCmd = Random.generate (List.singleton << SetGame << gameOfDeck) genDeck
 
 init : () -> (Model, Cmd Msg)
 init () =
-  ( { history = [], errors = [], drag = Drag.init }
+  ( { history = []
+    , errors = []
+    , drag = Drag.init
+    , highlightSeq = True
+    , highlightFoundation = True
+    }
   , newGameCmd
   )
 
@@ -262,6 +271,8 @@ updateOne msg model =
           Nothing -> Cmd.none
           Just g -> setTouchConfig g
       )
+    SetHighlightSeq to -> ({ model | highlightSeq = to }, Cmd.none)
+    SetHighlightFoundation to -> ({ model | highlightFoundation = to }, Cmd.none)
     Undo -> ({ model | history = List.drop 1 model.history }, Cmd.none)
 
 update : Msg -> Model -> (Model, Cmd Msg)

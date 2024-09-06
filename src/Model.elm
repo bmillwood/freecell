@@ -188,10 +188,10 @@ numEmptyFreeCells game =
   in
   Array.foldl f 0 game.freeCells
 
-tryMove : (Location, Int) -> Location -> Game -> Game
+tryMove : (Location, Int) -> Location -> Game -> Maybe Game
 tryMove (src, count) dst game =
   if src == dst || count > numEmptyFreeCells game + 1
-  then game
+  then Nothing
   else
     let
       moveCards = cardsFromSource game (src, count)
@@ -206,18 +206,20 @@ tryMove (src, count) dst game =
               { game
               | foundations = Array.set i card game.foundations
               } |> removeFromSource (src, count)
-            else game
-          _ -> game
+                |> Just
+            else Nothing
+          _ -> Nothing
       FreeCell i ->
         case (Array.get i game.freeCells, moveCards) of
           (Just Nothing, [card]) ->
             { game
             | freeCells = Array.set i (Just card) game.freeCells
             } |> removeFromSource (src, count)
-          _ -> game
+              |> Just
+          _ -> Nothing
       Cascade i ->
         case (Array.get i game.cascades, topCard) of
-          (_, Nothing) -> game
+          (_, Nothing) -> Nothing
           (Just cascade, Just srcLink) ->
             let
               compatible =
@@ -230,8 +232,9 @@ tryMove (src, count) dst game =
               { game
               | cascades = Array.set i (moveCards ++ cascade) game.cascades
               } |> removeFromSource (src, count)
-            else game
-          (Nothing, Just _) -> game
+                |> Just
+            else Nothing
+          (Nothing, Just _) -> Nothing
 
 idForLocation : Location -> String
 idForLocation loc =
@@ -273,7 +276,7 @@ updateOne msg model =
         newGame =
           case (model.history, Drag.held model.drag, dragMsg) of
             ((game, _) :: _, Just held, Drag.Drop (Just target)) ->
-              Just (tryMove held target game)
+              tryMove held target game
             _ -> Nothing
       in
       ( { model

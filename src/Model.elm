@@ -94,7 +94,7 @@ type Location
 
 type alias Model =
   { errors : List String
-  , history : List Game
+  , history : List (List Game)
   , drag : Drag.Model (Location, Int) Location
   , highlightSeq : Bool
   , highlightFoundation : Bool
@@ -127,16 +127,28 @@ cardsFromSource game (loc, count) =
 type OneMsg
   = AddError String
   | RequestNewGame
-  | SetGame Game
+  | NewGame Game
+  | AppendGame Game
   | Drag DragMsg
   | SetHighlightSeq Bool
   | SetHighlightFoundation Bool
   | Undo
+  | Restart
 
 type alias Msg = List OneMsg
 
 newGameCmd : Cmd Msg
-newGameCmd = Random.generate (List.singleton << SetGame << gameOfDeck) genDeck
+newGameCmd = Random.generate (List.singleton << NewGame << gameOfDeck) genDeck
+
+appendGame : Game -> Model -> Model
+appendGame updated model =
+  { model
+  | history =
+      case model.history of
+        [] -> [[updated]]
+        current :: rest ->
+          (updated :: current) :: rest
+  }
 
 init : () -> (Model, Cmd Msg)
 init () =
@@ -247,8 +259,12 @@ updateOne : OneMsg -> Model -> (Model, Cmd Msg)
 updateOne msg model =
   case msg of
     AddError new -> ({ model | errors = new :: model.errors }, Cmd.none)
-    SetGame game ->
-      ( { model | history = game :: model.history }
+    NewGame game ->
+      ( { model | history = [game] :: model.history }
+      , setTouchConfig game
+      )
+    AppendGame game ->
+      ( appendGame game model
       , setTouchConfig game
       )
     RequestNewGame -> (model, newGameCmd)
@@ -256,24 +272,44 @@ updateOne msg model =
       let
         newGame =
           case (model.history, Drag.held model.drag, dragMsg) of
-            (game :: _, Just held, Drag.Drop (Just target)) ->
+            ((game :: _) :: _, Just held, Drag.Drop (Just target)) ->
               Just (tryMove held target game)
             _ -> Nothing
       in
       ( { model
         | drag = Drag.update dragMsg model.drag
-        , history =
-            case newGame of
-              Nothing -> model.history
-              Just g -> g :: model.history
-        }
+        } |> case newGame of
+            Nothing -> identity
+            Just g -> appendGame g
       , case newGame of
           Nothing -> Cmd.none
           Just g -> setTouchConfig g
       )
     SetHighlightSeq to -> ({ model | highlightSeq = to }, Cmd.none)
     SetHighlightFoundation to -> ({ model | highlightFoundation = to }, Cmd.none)
-    Undo -> ({ model | history = List.drop 1 model.history }, Cmd.none)
+    Undo ->
+      ( { model
+        | history = case model.history of
+            [] -> model.history
+            [[_]] -> model.history
+            [] :: rest -> rest
+            [_] :: rest -> rest
+            (_ :: past) :: rest -> past :: rest
+        }
+      , Cmd.none
+      )
+    Restart ->
+      ( { model
+        | history = case model.history of
+            [] -> model.history
+            [[_]] -> model.history
+            [] :: _ -> model.history
+            (now :: past) :: rest ->
+              [List.foldl (\x a -> x) now past]
+              :: model.history
+        }
+      , Cmd.none
+      )
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update ones originalModel =

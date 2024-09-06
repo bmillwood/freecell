@@ -41,8 +41,8 @@ view model =
   let
     game =
       case model.history of
-        [] -> Model.emptyGame
-        latest :: _ -> latest
+        (latest :: _) :: _ -> latest
+        _ -> Model.emptyGame
     { foundations, freeCells, cascades } = game
     targetAttrs loc =
       [ if Drag.over model.drag == Just loc
@@ -177,6 +177,9 @@ view model =
           []
           [ Html.button
               [ Events.onClick [Model.RequestNewGame] ]
+              [ Html.text "new game" ]
+          , Html.button
+              [ Events.onClick [Model.Restart] ]
               [ Html.text "restart" ]
           , Html.button
               [ Events.onClick [Model.Undo] ]

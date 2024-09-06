@@ -65,15 +65,13 @@ view model =
         then []
         else [ Attributes.class "canFoundation" ]
       else []
-    sourceAttrs source =
-      [ if model.highlightSeq then [ Attributes.class "source" ] else []
+    sourceAttrs ((ourLoc, ourPos) as source) =
+      [ if model.highlightSeq && ourPos > 1
+        then [ Attributes.class "source" ]
+        else []
       , embedDragAttrs (Drag.sourceAttributes source model.drag)
       , case Drag.held model.drag of
-          Just held ->
-            let
-              (heldLoc, heldCount) = held
-              (ourLoc, ourPos) = source
-            in
+          Just (heldLoc, heldCount) ->
             if heldLoc == ourLoc && ourPos <= heldCount
             then [ Attributes.class "ghost" ]
             else []

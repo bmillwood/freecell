@@ -41,8 +41,8 @@ view model =
   let
     game =
       case model.history of
-        (latest :: _) :: _ -> latest
-        _ -> Model.emptyGame
+        (latest, _) :: _ -> latest
+        [] -> Model.emptyGame
     { foundations, freeCells, cascades } = game
     targetAttrs loc =
       [ if Drag.over model.drag == Just loc

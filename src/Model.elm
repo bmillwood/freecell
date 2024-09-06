@@ -94,7 +94,7 @@ type Location
 
 type alias Model =
   { errors : List String
-  , history : List (List Game)
+  , history : List (Game, List Game)
   , drag : Drag.Model (Location, Int) Location
   , highlightSeq : Bool
   , highlightFoundation : Bool
@@ -145,9 +145,9 @@ appendGame updated model =
   { model
   | history =
       case model.history of
-        [] -> [[updated]]
-        current :: rest ->
-          (updated :: current) :: rest
+        [] -> [(updated, [])]
+        (now, past) :: rest ->
+          (updated, now :: past) :: rest
   }
 
 init : () -> (Model, Cmd Msg)
@@ -260,7 +260,7 @@ updateOne msg model =
   case msg of
     AddError new -> ({ model | errors = new :: model.errors }, Cmd.none)
     NewGame game ->
-      ( { model | history = [game] :: model.history }
+      ( { model | history = (game, []) :: model.history }
       , setTouchConfig game
       )
     AppendGame game ->
@@ -272,7 +272,7 @@ updateOne msg model =
       let
         newGame =
           case (model.history, Drag.held model.drag, dragMsg) of
-            ((game :: _) :: _, Just held, Drag.Drop (Just target)) ->
+            ((game, _) :: _, Just held, Drag.Drop (Just target)) ->
               Just (tryMove held target game)
             _ -> Nothing
       in
@@ -291,10 +291,10 @@ updateOne msg model =
       ( { model
         | history = case model.history of
             [] -> model.history
-            [[_]] -> model.history
-            [] :: rest -> rest
-            [_] :: rest -> rest
-            (_ :: past) :: rest -> past :: rest
+            [(_, [])] -> model.history
+            (_, []) :: rest -> rest
+            (_, prev :: past) :: rest ->
+              (prev, past) :: rest
         }
       , Cmd.none
       )
@@ -302,10 +302,9 @@ updateOne msg model =
       ( { model
         | history = case model.history of
             [] -> model.history
-            [[_]] -> model.history
-            [] :: _ -> model.history
-            (now :: past) :: rest ->
-              [List.foldl (\x a -> x) now past]
+            [(_, [])] -> model.history
+            (now, past) :: rest ->
+              (List.foldl (\x a -> x) now past, [])
               :: model.history
         }
       , Cmd.none

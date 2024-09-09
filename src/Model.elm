@@ -87,15 +87,27 @@ initialSequenceLength cards =
       then 1 + initialSequenceLength (c2 :: rest)
       else 1
 
-type Location
+type CardLocation
   = Foundation Int
   | FreeCell Int
-  | Cascade Int
+  | Cascade Int Int
+
+type DropLocation
+  = ToFoundation
+  | ToFreeCell Int
+  | ToCascade Int
+
+dropLocation : CardLocation -> DropLocation
+dropLocation src =
+  case src of
+    Foundation _ -> ToFoundation
+    FreeCell i -> ToFreeCell i
+    Cascade i _ -> ToCascade i
 
 type alias Model =
   { errors : List String
   , history : List (Game, List Game)
-  , drag : Drag.Model (Location, Int) Location
+  , drag : Drag.Model CardLocation DropLocation
   , highlightSeq : Bool
   , highlightFoundation : Bool
   }
@@ -103,10 +115,10 @@ type alias Model =
 gameOfDeck : List Card -> Game
 gameOfDeck cards = { emptyGame | cascades = cascadesOfDeck 8 cards }
 
-type alias DragMsg = Drag.Msg (Location, Int) Location
+type alias DragMsg = Drag.Msg CardLocation DropLocation
 
-cardsFromSource : Game -> (Location, Int) -> List Card
-cardsFromSource game (loc, count) =
+cardsFromSource : Game -> CardLocation -> List Card
+cardsFromSource game loc =
   case loc of
     Foundation i ->
       case Array.get i game.foundations of
@@ -119,7 +131,7 @@ cardsFromSource game (loc, count) =
       case Array.get i game.freeCells |> Maybe.andThen identity of
         Nothing -> []
         Just card -> [card]
-    Cascade i ->
+    Cascade i count ->
       case Array.get i game.cascades of
         Nothing -> []
         Just cards -> List.take count cards
@@ -161,8 +173,8 @@ init () =
   , newGameCmd
   )
 
-removeFromSource : (Location, Int) -> Game -> Game
-removeFromSource (src, count) game =
+removeFromSource : CardLocation -> Game -> Game
+removeFromSource src game =
   case src of
     Foundation i ->
       case Array.get i game.foundations of
@@ -172,12 +184,13 @@ removeFromSource (src, count) game =
           | foundations = Array.set i { f | rank = f.rank - 1 } game.foundations
           }
     FreeCell i -> { game | freeCells = Array.set i Nothing game.freeCells }
-    Cascade i ->
+    Cascade i count ->
       case Array.get i game.cascades of
         Nothing -> game
         Just cards ->
           { game | cascades = Array.set i (List.drop count cards) game.cascades }
 
+-- should count empty cascades too
 numEmptyFreeCells : Game -> Int
 numEmptyFreeCells game =
   let
@@ -188,36 +201,43 @@ numEmptyFreeCells game =
   in
   Array.foldl f 0 game.freeCells
 
-tryMove : (Location, Int) -> Location -> Game -> Maybe Game
-tryMove (src, count) dst game =
-  if src == dst || count > numEmptyFreeCells game + 1
+tryMove : CardLocation -> DropLocation -> Game -> Maybe Game
+tryMove src dst game =
+  let
+    moveCards = cardsFromSource game src
+    topCard = List.foldl (always << Just) Nothing moveCards
+  in
+  if dropLocation src == dst || List.length moveCards > numEmptyFreeCells game + 1
   then Nothing
   else
-    let
-      moveCards = cardsFromSource game (src, count)
-      topCard = List.foldl (always << Just) Nothing moveCards
-    in
     case dst of
-      Foundation i ->
-        case (Array.get i game.foundations, moveCards) of
-          (Just f, [card]) ->
-            if card.suit == f.suit && card.rank == f.rank + 1
-            then
-              { game
-              | foundations = Array.set i card game.foundations
-              } |> removeFromSource (src, count)
-                |> Just
-            else Nothing
-          _ -> Nothing
-      FreeCell i ->
+      ToFoundation ->
+        let
+          tryFoundation i card maybeUpdated =
+            case Array.get i game.foundations of
+              Nothing -> Nothing
+              Just f ->
+                if card.suit == f.suit && card.rank == f.rank + 1
+                then
+                  Maybe.withDefault game maybeUpdated
+                  |> (\g -> { g | foundations = Array.set i card g.foundations })
+                  |> Just
+                else tryFoundation (i + 1) card maybeUpdated
+        in
+        -- I'm not certain this tries the cards in the "right" order, but
+        -- it shouldn't matter since adjacent cards of the same suit can't
+        -- be part of a moveable stack.
+        List.foldl (tryFoundation 0) Nothing moveCards
+        |> Maybe.map (removeFromSource src)
+      ToFreeCell i ->
         case (Array.get i game.freeCells, moveCards) of
           (Just Nothing, [card]) ->
             { game
             | freeCells = Array.set i (Just card) game.freeCells
-            } |> removeFromSource (src, count)
+            } |> removeFromSource src
               |> Just
           _ -> Nothing
-      Cascade i ->
+      ToCascade i ->
         case (Array.get i game.cascades, topCard) of
           (_, Nothing) -> Nothing
           (Just cascade, Just srcLink) ->
@@ -231,29 +251,29 @@ tryMove (src, count) dst game =
             then
               { game
               | cascades = Array.set i (moveCards ++ cascade) game.cascades
-              } |> removeFromSource (src, count)
+              } |> removeFromSource src
                 |> Just
             else Nothing
           (Nothing, Just _) -> Nothing
 
-idForLocation : Location -> String
-idForLocation loc =
+idForDrop : DropLocation -> String
+idForDrop loc =
   case loc of
-    Foundation i -> "fo" ++ String.fromInt i
-    FreeCell i -> "fc" ++ String.fromInt i
-    Cascade i -> "c" ++ String.fromInt i
+    ToFoundation -> "fo"
+    ToFreeCell i -> "fc" ++ String.fromInt i
+    ToCascade i -> "c" ++ String.fromInt i
 
-allLocations : Game -> List Location
-allLocations game =
-  [ List.indexedMap (\i _ -> Foundation i) (Array.toList game.foundations)
-  , List.indexedMap (\i _ -> FreeCell i) (Array.toList game.freeCells)
-  , List.indexedMap (\i _ -> Cascade i) (Array.toList game.cascades)
+allDropLocations : Game -> List DropLocation
+allDropLocations game =
+  [ [ ToFoundation ]
+  , List.indexedMap (\i _ -> ToFreeCell i) (Array.toList game.freeCells)
+  , List.indexedMap (\i _ -> ToCascade i) (Array.toList game.cascades)
   ] |> List.concat
 
 setTouchConfig : Game -> Cmd Msg
 setTouchConfig game =
   let
-    allTargetIds = List.map (\l -> (idForLocation l, l)) (allLocations game)
+    allTargetIds = List.map (\l -> (idForDrop l, l)) (allDropLocations game)
   in
   Drag.setTouchConfig { allTargetIds = allTargetIds }
   |> Cmd.map (List.singleton << Drag)

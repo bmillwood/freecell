@@ -44,18 +44,13 @@ view model =
         (latest, _) :: _ -> latest
         [] -> Model.emptyGame
     { foundations, freeCells, cascades } = game
+    andDrop src = (src, Model.dropLocation src)
     targetAttrs loc =
       [ if Drag.over model.drag == Just loc
         then [ Attributes.class "hovered" ]
         else []
       , embedDragAttrs (Drag.targetAttributes loc)
       ] |> List.concat
-    targetIfOne loc =
-      case Drag.held model.drag of
-        Nothing -> []
-        Just held ->
-          let (_, count) = held in
-          if count == 1 then targetAttrs loc else []
     cardAttrs = [ Attributes.class "card" ]
     highlightFoundation card =
       if model.highlightFoundation
@@ -65,27 +60,31 @@ view model =
         then []
         else [ Attributes.class "canFoundation" ]
       else []
-    sourceAttrs ((ourLoc, ourPos) as source) =
-      [ if model.highlightSeq && ourPos > 1
-        then [ Attributes.class "source" ]
-        else []
-      , embedDragAttrs (Drag.sourceAttributes source model.drag)
-      , case Drag.held model.drag of
-          Just (heldLoc, heldCount) ->
-            if heldLoc == ourLoc && ourPos <= heldCount
-            then [ Attributes.class "ghost" ]
+    sourceAttrs src =
+      let
+        thisIsHeld =
+          case (src, Drag.held model.drag) of
+            (Model.Cascade i pos, Just (Model.Cascade j c)) ->
+              i == j && pos <= c
+            (otherSrc, Just otherHeld) ->
+              otherSrc == otherHeld
+            _ -> False
+      in
+      [ case src of
+          Model.Cascade _ ourPos ->
+            if model.highlightSeq && ourPos > 1
+            then [ Attributes.class "source" ]
             else []
           _ -> []
+      , embedDragAttrs (Drag.sourceAttributes src model.drag)
+      , if thisIsHeld then [ Attributes.class "ghost" ] else []
       ] |> List.concat
     cardContents c = [ Html.text (rankText c.rank), viewSuit c.suit ]
     viewFoundation i c =
       let
-        loc = Model.Foundation i
         attrs =
           [ cardAttrs
-          , [ Attributes.id (Model.idForLocation loc) ]
-          , if c.rank > 0 then sourceAttrs (loc, 1) else []
-          , targetIfOne loc
+          , if c.rank > 0 then sourceAttrs (Model.Foundation i) else []
           ] |> List.concat
       in
       Html.span attrs (cardContents c)
@@ -95,49 +94,56 @@ view model =
         [ Html.text nbsp ]
     viewFreeCell i fc =
       let
-        loc = Model.FreeCell i
-        idAttr = Attributes.id (Model.idForLocation loc)
+        (src, dst) = andDrop (Model.FreeCell i)
+        idAttr = Attributes.id (Model.idForDrop dst)
+        emptyTarget =
+          case Drag.held model.drag of
+            Nothing -> []
+            Just (Model.Cascade _ count) ->
+              if count == 1 then targetAttrs dst else []
+            Just _ -> targetAttrs dst
       in
       case fc of
-        Nothing -> emptyCard (idAttr :: targetIfOne loc)
+        Nothing -> emptyCard (idAttr :: emptyTarget)
         Just c ->
           Html.span
-            (idAttr :: cardAttrs ++ highlightFoundation c ++ sourceAttrs (loc, 1))
+            (idAttr :: cardAttrs ++ highlightFoundation c ++ sourceAttrs src)
             (cardContents c)
     cardsFromSource =
       case Drag.held model.drag of
         Nothing -> []
         Just held -> Model.cardsFromSource game held
-    ghostCards loc =
-      let
-        ghostCard c =
-          Html.span
-            (cardAttrs ++ [ Attributes.class "ghost" ])
-            (cardContents c)
-      in
-      case Drag.heldOver model.drag of
-        Nothing -> []
-        Just { held, over } ->
-          let (srcLoc, _) = held in
-          if srcLoc /= loc && over == Just loc
-          then List.map ghostCard cardsFromSource
-          else []
+    ghostCard c =
+      Html.span
+        (cardAttrs ++ [ Attributes.class "ghost" ])
+        (cardContents c)
     viewCascade i cascade =
       let
-        loc = Model.Cascade i
+        dropLoc = Model.ToCascade i
         moveable = Model.initialSequenceLength cascade
+        isHeld =
+          case Drag.held model.drag of
+            Just (Model.Cascade j _) -> i == j
+            _ -> False
+        ghostCards =
+          case Drag.over model.drag of
+            Just (Model.ToCascade j) ->
+              if not isHeld && i == j
+              then List.map ghostCard cardsFromSource
+              else []
+            _ -> []
         cascadeCard j c =
           let
             attrs =
               [ cardAttrs
               , highlightFoundation c
               , if j < moveable
-                then sourceAttrs (loc, j + 1)
+                then sourceAttrs (Model.Cascade i (j + 1))
                 else []
               ] |> List.concat
           in
           Html.span attrs (cardContents c)
-        cascadeWithGhosts = ghostCards loc ++ List.indexedMap cascadeCard cascade
+        cascadeWithGhosts = ghostCards ++ List.indexedMap cascadeCard cascade
         cascadeOrSlot =
           if List.isEmpty cascadeWithGhosts
           then [ emptyCard [] ]
@@ -145,8 +151,8 @@ view model =
       in
       Html.div
         (Attributes.class "cascade"
-          :: Attributes.id (Model.idForLocation loc)
-          :: targetAttrs loc)
+          :: Attributes.id (Model.idForDrop dropLoc)
+          :: targetAttrs dropLoc)
         (List.reverse cascadeOrSlot)
     checkbox id isChecked onCheck text =
       Html.label
@@ -163,8 +169,13 @@ view model =
   in
   { title = "FreeCell"
   , body =
-      [ Html.div
-          [ Attributes.class "foundations" ]
+      [ let
+          attrs =
+            [ Attributes.class "foundations"
+            , Attributes.id (Model.idForDrop Model.ToFoundation)
+            ] ++ targetAttrs Model.ToFoundation
+        in
+        Html.div attrs
           (Array.toList foundations |> List.indexedMap viewFoundation)
       , Html.div
           [ Attributes.class "freeCells" ]

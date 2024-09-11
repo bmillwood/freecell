@@ -2,6 +2,7 @@ module Model exposing (..)
 
 import Array exposing (Array)
 import Random
+import Task
 
 import Drag
 
@@ -110,6 +111,7 @@ type alias Model =
   , drag : Drag.Model FromLocation DropLocation
   , highlightSeq : Bool
   , highlightFoundation : Bool
+  , autoMoveFoundation : Bool
   }
 
 gameOfDeck : List Card -> Game
@@ -142,8 +144,10 @@ type OneMsg
   | NewGame Game
   | AppendGame Game
   | Drag DragMsg
+  | TryMove FromLocation DropLocation
   | SetHighlightSeq Bool
   | SetHighlightFoundation Bool
+  | SetAutoMoveFoundation Bool
   | Undo
   | Restart
 
@@ -162,6 +166,58 @@ appendGame updated model =
           (updated, now :: past) :: rest
   }
 
+updateGame : (Game -> Maybe Game) -> Model -> Maybe (Model, Cmd Msg)
+updateGame f model =
+  case model.history of
+    [] -> Nothing
+    (game, _) :: _ ->
+      f game
+      |> Maybe.map (\newGame ->
+          ( appendGame newGame model
+          , Cmd.batch [setTouchConfig newGame, autoMove model newGame]
+          )
+        )
+
+allSources : Game -> List (FromLocation, Card)
+allSources game =
+  [ Array.toList game.foundations
+    |> List.indexedMap
+        (\i c -> if c.rank > 0 then Just (FromFoundation i, c) else Nothing)
+  , Array.toList game.freeCells
+    |> List.indexedMap
+       (\i mc -> mc |> Maybe.map (\c -> (FromFreeCell i, c)))
+  , Array.toList (Array.map List.head game.cascades)
+    |> List.indexedMap
+       (\i mc -> mc |> Maybe.map (\c -> (FromCascade i 1, c)))
+  ] |> List.concat |> List.filterMap identity
+
+autoMove : Model -> Game -> Cmd Msg
+autoMove model game =
+  if not model.autoMoveFoundation
+  then Cmd.none
+  else
+    let
+      nextRank foundations =
+        foundations
+        |> List.map .rank
+        |> List.minimum
+        |> Maybe.withDefault 0
+        |> \current -> current + 1
+      (nextRed, nextBlack) =
+        List.partition (\c -> isRed c.suit) (Array.toList game.foundations)
+        |> \(rf, bf) -> (nextRank rf, nextRank bf)
+      canAuto card =
+        List.any (\f -> card.suit == f.suit && card.rank == f.rank + 1)
+          (Array.toList game.foundations)
+      shouldAuto card = card.rank <= 1 + if isRed card.suit then nextBlack else nextRed
+      tryAuto (src, card) =
+        if canAuto card && shouldAuto card
+        then [TryMove src ToFoundation]
+        else []
+    in
+    List.concatMap tryAuto (allSources game)
+    |> Task.succeed >> Task.perform identity
+
 init : () -> (Model, Cmd Msg)
 init () =
   ( { history = []
@@ -169,6 +225,7 @@ init () =
     , drag = Drag.init
     , highlightSeq = True
     , highlightFoundation = True
+    , autoMoveFoundation = False
     }
   , newGameCmd
   )
@@ -314,24 +371,18 @@ updateOne msg model =
       )
     RequestNewGame -> (model, newGameCmd)
     Drag dragMsg ->
-      let
-        newGame =
-          case (model.history, Drag.held model.drag, dragMsg) of
-            ((game, _) :: _, Just held, Drag.Drop (Just target)) ->
-              tryMove held target game
-            _ -> Nothing
-      in
-      ( { model
-        | drag = Drag.update dragMsg model.drag
-        } |> case newGame of
-            Nothing -> identity
-            Just g -> appendGame g
-      , case newGame of
-          Nothing -> Cmd.none
-          Just g -> setTouchConfig g
+      ( { model | drag = Drag.update dragMsg model.drag }
+      , case (Drag.held model.drag, dragMsg) of
+          (Just held, Drag.Drop (Just target)) ->
+            Task.perform identity (Task.succeed [TryMove held target])
+          _ -> Cmd.none
       )
+    TryMove from to ->
+      updateGame (tryMove from to) model
+      |> Maybe.withDefault (model, Cmd.none)
     SetHighlightSeq to -> ({ model | highlightSeq = to }, Cmd.none)
     SetHighlightFoundation to -> ({ model | highlightFoundation = to }, Cmd.none)
+    SetAutoMoveFoundation to -> ({ model | autoMoveFoundation = to }, Cmd.none)
     Undo ->
       ( { model
         | history = case model.history of

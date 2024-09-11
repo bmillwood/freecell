@@ -215,6 +215,16 @@ view model =
                       "next foundation"
                   ]
               ]
+          , Html.text "automove:"
+          , Html.ul []
+              [ Html.li []
+                  [ checkbox
+                      "automoveFoundation"
+                      model.autoMoveFoundation
+                      (List.singleton << Model.SetAutoMoveFoundation)
+                      "low foundation"
+                  ]
+              ]
           ]
       , Html.ul
           [ Attributes.class "errors" ]

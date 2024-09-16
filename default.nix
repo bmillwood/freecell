@@ -44,7 +44,7 @@ stdenv.mkDerivation {
       };
     };
     elmVersion = "0.19.1";
-    registryDat = ./registry.dat;
+    registryDat = ~/.elm/0.19.1/packages/registry.dat;
   };
   buildPhase = ''
     wc -c $ELM_HOME/0.19.1/packages/registry.dat

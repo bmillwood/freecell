@@ -1,5 +1,9 @@
+{ nixpkgs ? <nixpkgs>
+, config ? {}
+}:
+
 let
-  pkgs = import <nixpkgs> { };
+  pkgs = import nixpkgs config;
   inherit (pkgs) stdenv;
 in
 stdenv.mkDerivation {

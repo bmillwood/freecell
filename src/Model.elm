@@ -228,7 +228,7 @@ init () =
     , drag = Drag.init
     , highlightSeq = True
     , highlightFoundation = True
-    , autoMoveFoundation = False
+    , autoMoveFoundation = True
     }
   , newGameCmd
   )

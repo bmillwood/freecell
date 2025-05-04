@@ -209,7 +209,10 @@ autoMove model game =
       canAuto card =
         List.any (\f -> card.suit == f.suit && card.rank == f.rank + 1)
           (Array.toList game.foundations)
-      shouldAuto card = card.rank <= 1 + if isRed card.suit then nextBlack else nextRed
+      shouldAuto card =
+        card.rank <= min
+          (1 + if isRed card.suit then nextBlack else nextRed)
+          (2 + if isRed card.suit then nextRed else nextBlack)
       tryAuto (src, card) =
         if canAuto card && shouldAuto card
         then [TryMove src ToFoundation]

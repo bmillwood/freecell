@@ -220,7 +220,7 @@ view model =
               [ Html.li []
                   [ checkbox
                       "automoveFoundation"
-                      model.autoMoveFoundation
+                      model.autoMove.lowFoundation
                       (List.singleton << Model.SetAutoMoveFoundation)
                       "low foundation"
                   ]

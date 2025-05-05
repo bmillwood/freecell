@@ -105,13 +105,17 @@ dropLocation src =
     FromFreeCell i -> ToFreeCell i
     FromCascade i _ -> ToCascade i
 
+type alias AutoMove =
+  { lowFoundation : Bool
+  }
+
 type alias Model =
   { errors : List String
   , history : List (Game, List Game)
   , drag : Drag.Model FromLocation DropLocation
   , highlightSeq : Bool
   , highlightFoundation : Bool
-  , autoMoveFoundation : Bool
+  , autoMove : AutoMove
   }
 
 gameOfDeck : List Card -> Game
@@ -193,7 +197,7 @@ allSources game =
 
 autoMove : Model -> Game -> Cmd Msg
 autoMove model game =
-  if not model.autoMoveFoundation
+  if not model.autoMove.lowFoundation
   then Cmd.none
   else
     let
@@ -228,7 +232,7 @@ init () =
     , drag = Drag.init
     , highlightSeq = True
     , highlightFoundation = True
-    , autoMoveFoundation = True
+    , autoMove = { lowFoundation = True }
     }
   , newGameCmd
   )
@@ -385,7 +389,7 @@ updateOne msg model =
       |> Maybe.withDefault (model, Cmd.none)
     SetHighlightSeq to -> ({ model | highlightSeq = to }, Cmd.none)
     SetHighlightFoundation to -> ({ model | highlightFoundation = to }, Cmd.none)
-    SetAutoMoveFoundation to -> ({ model | autoMoveFoundation = to }, Cmd.none)
+    SetAutoMoveFoundation to -> ({ model | autoMove = { lowFoundation = to } }, Cmd.none)
     Undo ->
       ( { model
         | history = case model.history of

@@ -62,8 +62,28 @@ body {
 <body>
 <div id="elm"></div>
 <script type="text/javascript">
+// Elm does the parsing, so that it can complain about what it finds.
+function loadProgress() {
+    try {
+        return window.localStorage.getItem('progress');
+    } catch (e) {
+        // Private browsing, a disabled localStorage: playing without a memory
+        // is much better than not playing.
+        return null;
+    }
+}
+
 var app = Elm.Main.init({
     node: document.getElementById('elm'),
+    flags: loadProgress(),
+});
+
+app.ports.setProgress.subscribe(function (progress) {
+    try {
+        window.localStorage.setItem('progress', JSON.stringify(progress));
+    } catch (e) {
+        // as above: not remembering beats not playing
+    }
 });
 </script>
 </body>

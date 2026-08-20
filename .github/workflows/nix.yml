@@ -2,22 +2,22 @@ on:
   push:
     branches:
       - main
+  # No paths filter: every pull request gets a preview deploy, so every pull
+  # request needs a build, whatever it touched.
   pull_request:
-    paths:
-      - .github/workflows/nix.yml
-      - '**.nix'
-      - '**.elm'
-      - elm.json
 
 env:
   nixpkgs_version: 1559d3daa3ecc813a650b79375ea61b6741b8746 # renovate: datasource=git-refs depName=NixOS/nixpkgs packageName=https://github.com/NixOS/nixpkgs currentValue=nixos-unstable
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash -euo pipefail {0}
+    env:
+      # main goes to the root of the site, pull requests to pr/<number>/
+      dir: ${{ github.event_name == 'pull_request' && format('pr/{0}', github.event.number) || '.' }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -27,3 +27,44 @@ jobs:
           nix_path: nixpkgs=https://github.com/NixOS/nixpkgs/archive/${{ env.nixpkgs_version }}.tar.gz
 
       - run: nix-build
+
+      # Each deployment replaces the entire site, so a preview only exists
+      # until the next one: with two pull requests open, the older preview
+      # 404s rather than serving the wrong game.
+      - run: mkdir -p "site/$dir" && cp result/index.html result/elm.js "site/$dir/"
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+  # Separate from the build so that the environment's branch policy rejecting
+  # a deployment doesn't also cost us the build result.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    # A deployment is the whole site, so we want the last one to finish, not
+    # the last one to start. Only the deploys queue: builds can still overlap.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+      pull-requests: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+        id: deployment
+
+      # Only on opened: the URL doesn't change as the branch is pushed to, so
+      # repeating it on every run would just be noise.
+      - if: github.event.action == 'opened'
+        run: |
+          gh pr comment "$NUMBER" --body "Playable preview of this branch: ${PAGE_URL}pr/$NUMBER/"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.number }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}

@@ -196,6 +196,20 @@ view model =
               [ Events.onClick [Model.Undo] ]
               [ Html.text "undo" ]
           ]
+      , Html.div
+          []
+          [ Html.label
+              [ Attributes.for "seed" ]
+              [ Html.text "seed:" ]
+          , Html.input
+              [ Attributes.id "seed"
+              , Attributes.type_ "text"
+              , Attributes.attribute "inputmode" "numeric"
+              , Attributes.value model.seedInput
+              , Events.onInput (List.singleton << Model.SetSeedInput)
+              ]
+              []
+          ]
       , Html.p
           []
           [ Html.text "highlight:"

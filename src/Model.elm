@@ -116,6 +116,7 @@ type alias Model =
   , highlightSeq : Bool
   , highlightFoundation : Bool
   , autoMove : AutoMove
+  , seedInput : String
   }
 
 gameOfDeck : List Card -> Game
@@ -145,6 +146,7 @@ cardsFromSource game loc =
 type OneMsg
   = AddError String
   | RequestNewGame
+  | NewGameSeed Int
   | NewGame Game
   | AppendGame Game
   | Drag DragMsg
@@ -152,13 +154,20 @@ type OneMsg
   | SetHighlightSeq Bool
   | SetHighlightFoundation Bool
   | SetAutoMoveFoundation Bool
+  | SetSeedInput String
   | Undo
   | Restart
 
 type alias Msg = List OneMsg
 
-newGameCmd : Cmd Msg
-newGameCmd = Random.generate (List.singleton << NewGame << gameOfDeck) genDeck
+gameOfSeed : Int -> Game
+gameOfSeed seed =
+  Random.step genDeck (Random.initialSeed seed) |> Tuple.first |> gameOfDeck
+
+-- an arbitrary seed, when the player hasn't asked for a particular one
+randomSeedCmd : Cmd Msg
+randomSeedCmd =
+  Random.generate (List.singleton << NewGameSeed) (Random.int 0 (2 ^ 31 - 1))
 
 appendGame : Game -> Model -> Model
 appendGame updated model =
@@ -233,8 +242,9 @@ init () =
     , highlightSeq = True
     , highlightFoundation = True
     , autoMove = { lowFoundation = True }
+    , seedInput = ""
     }
-  , newGameCmd
+  , randomSeedCmd
   )
 
 removeFromSource : FromLocation -> Game -> Game
@@ -376,7 +386,14 @@ updateOne msg model =
       ( appendGame game model
       , setTouchConfig game
       )
-    RequestNewGame -> (model, newGameCmd)
+    RequestNewGame ->
+      case String.toInt (String.trim model.seedInput) of
+        Just seed -> updateOne (NewGameSeed seed) model
+        Nothing -> (model, randomSeedCmd)
+    NewGameSeed seed ->
+      updateOne
+        (NewGame (gameOfSeed seed))
+        { model | seedInput = String.fromInt seed }
     Drag dragMsg ->
       ( { model | drag = Drag.update dragMsg model.drag }
       , case (Drag.held model.drag, dragMsg) of
@@ -390,6 +407,7 @@ updateOne msg model =
     SetHighlightSeq to -> ({ model | highlightSeq = to }, Cmd.none)
     SetHighlightFoundation to -> ({ model | highlightFoundation = to }, Cmd.none)
     SetAutoMoveFoundation to -> ({ model | autoMove = { lowFoundation = to } }, Cmd.none)
+    SetSeedInput to -> ({ model | seedInput = to }, Cmd.none)
     Undo ->
       ( { model
         | history = case model.history of

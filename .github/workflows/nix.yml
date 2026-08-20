@@ -10,7 +10,7 @@ env:
   nixpkgs_version: 1559d3daa3ecc813a650b79375ea61b6741b8746 # renovate: datasource=git-refs depName=NixOS/nixpkgs packageName=https://github.com/NixOS/nixpkgs currentValue=nixos-unstable
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -40,7 +40,7 @@ jobs:
   # Separate from the build so that the environment's branch policy rejecting
   # a deployment doesn't also cost us the build result.
   deploy:
-    needs: test
+    needs: build
     runs-on: ubuntu-latest
     # A deployment is the whole site, so we want the last one to finish, not
     # the last one to start. Only the deploys queue: builds can still overlap.

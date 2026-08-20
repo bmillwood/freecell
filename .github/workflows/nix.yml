@@ -15,20 +15,12 @@ concurrency:
   group: pages
   cancel-in-progress: false
 
-permissions:
-  pages: write
-  id-token: write
-  pull-requests: write
-
 jobs:
   test:
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash -euo pipefail {0}
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     env:
       # main goes to the root of the site, pull requests to pr/<number>/
       dir: ${{ github.event_name == 'pull_request' && format('pr/{0}', github.event.number) || '.' }}
@@ -51,6 +43,20 @@ jobs:
         with:
           path: site
 
+  # Separate from the build so that the environment's branch policy rejecting
+  # a deployment doesn't also cost us the build result.
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+      pull-requests: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
       - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
         id: deployment
 

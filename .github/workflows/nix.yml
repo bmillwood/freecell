@@ -5,29 +5,33 @@ on:
   # No paths filter: every pull request gets a preview deploy, so every pull
   # request needs a build, whatever it touched.
   pull_request:
-    types: [opened, synchronize, reopened, closed]
 
 env:
   nixpkgs_version: 1559d3daa3ecc813a650b79375ea61b6741b8746 # renovate: datasource=git-refs depName=NixOS/nixpkgs packageName=https://github.com/NixOS/nixpkgs currentValue=nixos-unstable
 
-# Both jobs push to gh-pages, and neither can rebase, so let them queue.
-concurrency: gh-pages
+# A deployment is the whole site, so this is the last one to finish, not the
+# last one to start.
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  pages: write
+  id-token: write
   pull-requests: write
 
 jobs:
   test:
-    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash -euo pipefail {0}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     env:
       # main goes to the root of the site, pull requests to pr/<number>/
       dir: ${{ github.event_name == 'pull_request' && format('pr/{0}', github.event.number) || '.' }}
-      url: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,58 +42,24 @@ jobs:
 
       - run: nix-build
 
-      # A pull request from a fork gets a read-only token, so there's nothing
-      # to deploy with. Build it anyway, just don't try to publish it.
-      - name: publish to gh-pages
-        if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --depth=1 origin gh-pages
-          git worktree add pages -B gh-pages origin/gh-pages
-          mkdir -p "pages/$dir"
-          # The build is two files with fixed names, so copying over the top of
-          # whatever is there is enough: nothing can be left behind stale.
-          cp result/index.html result/elm.js "pages/$dir/"
-          git -C pages add .
-          if git -C pages diff --cached --quiet
-          then echo "no change to publish"
-          else
-            git -C pages commit -m "deploy ${GITHUB_SHA:0:7} to ${dir}"
-            git -C pages push origin gh-pages
-          fi
+      # Each deployment replaces the entire site, so a preview only exists
+      # until the next one: with two pull requests open, the older preview
+      # 404s rather than serving the wrong game.
+      - run: mkdir -p "site/$dir" && cp result/index.html result/elm.js "site/$dir/"
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
+        id: deployment
 
       # Only on opened: the URL doesn't change as the branch is pushed to, so
       # repeating it on every run would just be noise.
       - if: github.event.action == 'opened'
         run: |
-          gh pr comment "$NUMBER" --body "Playable preview of this branch: ${url}pr/$NUMBER/"
+          gh pr comment "$NUMBER" --body "Playable preview of this branch: ${PAGE_URL}pr/$NUMBER/"
         env:
           GH_TOKEN: ${{ github.token }}
           NUMBER: ${{ github.event.number }}
-
-  clean:
-    if: github.event.action == 'closed'
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash -euo pipefail {0}
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: delete this pull request's preview
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch --depth=1 origin gh-pages
-          git worktree add pages -B gh-pages origin/gh-pages
-          git -C pages rm -rq --ignore-unmatch "pr/$NUMBER"
-          if git -C pages diff --cached --quiet
-          then echo "no preview to delete"
-          else
-            git -C pages commit -m "delete preview for pr/$NUMBER"
-            git -C pages push origin gh-pages
-          fi
-        env:
-          NUMBER: ${{ github.event.number }}
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}

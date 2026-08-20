@@ -39,10 +39,11 @@ embedDragAttrs = List.map (Attributes.map (List.singleton << Model.Drag))
 view : Model -> Browser.Document Msg
 view model =
   let
-    game =
-      case model.history of
-        (latest, _) :: _ -> latest
-        [] -> Model.emptyGame
+    playing = Model.playing model
+    game = Maybe.map .now playing |> Maybe.withDefault Model.emptyGame
+    solvedBefore seed =
+      Maybe.map (\firstUnsolved -> seed < firstUnsolved) model.firstUnsolved
+      |> Maybe.withDefault False
     { foundations, freeCells, cascades } = game
     locations src = (src, Model.ofFrom src, Model.dropLocation src)
     targetAttrs loc =
@@ -184,6 +185,25 @@ view model =
           [ Attributes.class "cascades" ]
           (List.indexedMap viewCascade (Array.toList cascades))
       , Html.hr [] []
+      , case playing of
+          Nothing ->
+            Html.p
+              []
+              [ Html.text
+                  ("I haven't dealt a game, because I couldn't read the"
+                    ++ " progress I'd stored (below). Tell me which game you'd"
+                    ++ " got to and I'll start remembering again from there.")
+              ]
+          Just current ->
+            Html.p
+              []
+              [ Html.text ("game " ++ String.fromInt current.seed)
+              , if Model.isWon game
+                then Html.strong [] [ Html.text " — you win!" ]
+                else if solvedBefore current.seed
+                  then Html.text " (solved before)"
+                  else Html.text ""
+              ]
       , Html.div
           []
           [ Html.button
@@ -200,7 +220,7 @@ view model =
           []
           [ Html.label
               [ Attributes.for "seed" ]
-              [ Html.text "seed:" ]
+              [ Html.text "game:" ]
           , Html.input
               [ Attributes.id "seed"
               , Attributes.type_ "text"

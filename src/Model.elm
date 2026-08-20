@@ -1,6 +1,8 @@
-module Model exposing (..)
+port module Model exposing (..)
 
 import Array exposing (Array)
+import Json.Decode
+import Json.Encode
 import Random
 import Task
 
@@ -109,15 +111,47 @@ type alias AutoMove =
   { lowFoundation : Bool
   }
 
+-- One game, its seed, and the positions we've moved through to get here,
+-- most recent first.
+type alias Playing =
+  { seed : Int
+  , now : Game
+  , past : List Game
+  }
+
 type alias Model =
   { errors : List String
-  , history : List (Game, List Game)
+  -- a stack of games: starting a new one leaves the old one underneath, so
+  -- undo can take you back to it
+  , history : List Playing
   , drag : Drag.Model FromLocation DropLocation
   , highlightSeq : Bool
   , highlightFoundation : Bool
   , autoMove : AutoMove
+  -- the number of the lowest game the player hasn't beaten: it's where they
+  -- pick up when they come back, and it's all we remember about them.
+  -- Nothing means we couldn't read what we'd stored, and are waiting to be
+  -- told what to replace it with.
+  , firstUnsolved : Maybe Int
+  -- what's in the text box, which is only the game we're playing until it's
+  -- typed in
   , seedInput : String
   }
+
+port setProgress : Json.Encode.Value -> Cmd msg
+
+-- An object with one field so far, so that remembering something else later
+-- doesn't have to mean reading the old shape back.
+progressDecoder : Json.Decode.Decoder Int
+progressDecoder = Json.Decode.field "firstUnsolved" Json.Decode.int
+
+-- Knowing where the player has got to and remembering it are the same thing.
+setFirstUnsolved : Int -> Model -> (Model, Cmd Msg)
+setFirstUnsolved firstUnsolved model =
+  ( { model | firstUnsolved = Just firstUnsolved }
+  , setProgress
+      (Json.Encode.object [("firstUnsolved", Json.Encode.int firstUnsolved)])
+  )
 
 gameOfDeck : List Card -> Game
 gameOfDeck cards = { emptyGame | cascades = cascadesOfDeck 8 cards }
@@ -147,7 +181,6 @@ type OneMsg
   = AddError String
   | RequestNewGame
   | NewGameSeed Int
-  | NewGame Game
   | AppendGame Game
   | Drag DragMsg
   | TryMove FromLocation DropLocation
@@ -160,36 +193,59 @@ type OneMsg
 
 type alias Msg = List OneMsg
 
+-- The game number is the seed: game 0 is the same deal for everyone, forever.
 gameOfSeed : Int -> Game
 gameOfSeed seed =
   Random.step genDeck (Random.initialSeed seed) |> Tuple.first |> gameOfDeck
 
--- an arbitrary seed, when the player hasn't asked for a particular one
-randomSeedCmd : Cmd Msg
-randomSeedCmd =
-  Random.generate (List.singleton << NewGameSeed) (Random.int 0 (2 ^ 31 - 1))
+isWon : Game -> Bool
+isWon game =
+  Array.toList game.foundations |> List.all (\card -> card.rank == 13)
+
+playing : Model -> Maybe Playing
+playing model = List.head model.history
+
+-- the box shows the game you're looking at, until you type in it
+showSeed : Model -> Model
+showSeed model =
+  case playing model of
+    Nothing -> model
+    Just current -> { model | seedInput = String.fromInt current.seed }
 
 appendGame : Game -> Model -> Model
 appendGame updated model =
   { model
   | history =
       case model.history of
-        [] -> [(updated, [])]
-        (now, past) :: rest ->
-          (updated, now :: past) :: rest
+        [] -> []
+        current :: rest ->
+          { current | now = updated, past = current.now :: current.past }
+          :: rest
   }
 
 updateGame : (Game -> Maybe Game) -> Model -> Maybe (Model, Cmd Msg)
 updateGame f model =
-  case model.history of
-    [] -> Nothing
-    (game, _) :: _ ->
-      f game
+  playing model
+  |> Maybe.andThen (\current ->
+      f current.now
       |> Maybe.map (\newGame ->
-          ( appendGame newGame model
-          , Cmd.batch [setTouchConfig newGame, autoMove model newGame]
+          let
+            -- Beating a game we've already beaten, or one beyond the first we
+            -- haven't, tells us nothing we aren't already remembering.
+            (progressed, saveProgress) =
+              if isWon newGame && model.firstUnsolved == Just current.seed
+              then setFirstUnsolved (current.seed + 1) model
+              else (model, Cmd.none)
+          in
+          ( appendGame newGame progressed
+          , Cmd.batch
+              [ setTouchConfig newGame
+              , autoMove model newGame
+              , saveProgress
+              ]
           )
         )
+    )
 
 allSources : Game -> List (FromLocation, Card)
 allSources game =
@@ -234,18 +290,44 @@ autoMove model game =
     List.concatMap tryAuto (allSources game)
     |> Task.succeed >> Task.perform identity
 
-init : () -> (Model, Cmd Msg)
-init () =
-  ( { history = []
-    , errors = []
-    , drag = Drag.init
-    , highlightSeq = True
-    , highlightFoundation = True
-    , autoMove = { lowFoundation = True }
-    , seedInput = ""
-    }
-  , randomSeedCmd
-  )
+-- The flags are whatever was in storage, as a string, or null for a first
+-- visit, which starts at the beginning.
+storedFirstUnsolved : Json.Decode.Value -> Result Json.Decode.Error Int
+storedFirstUnsolved flags =
+  case Json.Decode.decodeValue (Json.Decode.nullable Json.Decode.string) flags of
+    Err err -> Err err
+    Ok Nothing -> Ok 0
+    Ok (Just stored) -> Json.Decode.decodeString progressDecoder stored
+
+init : Json.Decode.Value -> (Model, Cmd Msg)
+init flags =
+  let
+    noGame =
+      { history = []
+      , errors = []
+      , drag = Drag.init
+      , highlightSeq = True
+      , highlightFoundation = True
+      , autoMove = { lowFoundation = True }
+      , firstUnsolved = Nothing
+      , seedInput = ""
+      }
+  in
+  case storedFirstUnsolved flags of
+    Ok firstUnsolved ->
+      updateOne
+        (NewGameSeed firstUnsolved)
+        { noGame | firstUnsolved = Just firstUnsolved }
+    -- Storage we can't read is more likely a migration we forgot to write than
+    -- anything else, so don't deal a game and don't overwrite it: say what we
+    -- found, and let the player say where they'd got to.
+    Err err ->
+      ( { noGame
+        | errors =
+            [ "couldn't read your progress: " ++ Json.Decode.errorToString err ]
+        }
+      , Cmd.none
+      )
 
 removeFromSource : FromLocation -> Game -> Game
 removeFromSource src game =
@@ -378,9 +460,21 @@ updateOne : OneMsg -> Model -> (Model, Cmd Msg)
 updateOne msg model =
   case msg of
     AddError new -> ({ model | errors = new :: model.errors }, Cmd.none)
-    NewGame game ->
-      ( { model | history = (game, []) :: model.history }
-      , setTouchConfig game
+    NewGameSeed seed ->
+      let
+        game = gameOfSeed seed
+        -- If we couldn't read where the player had got to, the game they pick
+        -- is our new answer.
+        (based, saveProgress) =
+          case model.firstUnsolved of
+            Just _ -> (model, Cmd.none)
+            Nothing -> setFirstUnsolved seed model
+      in
+      ( showSeed
+          { based
+          | history = { seed = seed, now = game, past = [] } :: based.history
+          }
+      , Cmd.batch [setTouchConfig game, saveProgress]
       )
     AppendGame game ->
       ( appendGame game model
@@ -388,12 +482,24 @@ updateOne msg model =
       )
     RequestNewGame ->
       case String.toInt (String.trim model.seedInput) of
-        Just seed -> updateOne (NewGameSeed seed) model
-        Nothing -> (model, randomSeedCmd)
-    NewGameSeed seed ->
-      updateOne
-        (NewGame (gameOfSeed seed))
-        { model | seedInput = String.fromInt seed }
+        Nothing ->
+          updateOne
+            (AddError (model.seedInput ++ " is not a game number"))
+            model
+        Just seed ->
+          -- Once you've won, asking for a new game means the next one, not
+          -- another go at the one you've just beaten.
+          let
+            wonThisOne =
+              playing model
+              |> Maybe.map (\current ->
+                  current.seed == seed && isWon current.now
+                )
+              |> Maybe.withDefault False
+          in
+          updateOne
+            (NewGameSeed (if wonThisOne then seed + 1 else seed))
+            model
     Drag dragMsg ->
       ( { model | drag = Drag.update dragMsg model.drag }
       , case (Drag.held model.drag, dragMsg) of
@@ -409,24 +515,34 @@ updateOne msg model =
     SetAutoMoveFoundation to -> ({ model | autoMove = { lowFoundation = to } }, Cmd.none)
     SetSeedInput to -> ({ model | seedInput = to }, Cmd.none)
     Undo ->
-      ( { model
-        | history = case model.history of
-            [] -> model.history
-            [(_, [])] -> model.history
-            (_, []) :: rest -> rest
-            (_, prev :: past) :: rest ->
-              (prev, past) :: rest
-        }
+      ( showSeed
+          { model
+          | history = case model.history of
+              [] -> model.history
+              current :: rest ->
+                case (current.past, rest) of
+                  (prev :: past, _) ->
+                    { current | now = prev, past = past } :: rest
+                  -- nothing left to undo in this game: fall back to the one
+                  -- we were playing before, if there is one
+                  ([], []) -> model.history
+                  ([], _ :: _) -> rest
+          }
       , Cmd.none
       )
     Restart ->
       ( { model
         | history = case model.history of
             [] -> model.history
-            [(_, [])] -> model.history
-            (now, past) :: rest ->
-              (List.foldl (\x a -> x) now past, [])
-              :: model.history
+            current :: _ ->
+              if List.isEmpty current.past
+              then model.history
+              else
+                { current
+                | now = List.foldl (\x a -> x) current.now current.past
+                , past = []
+                }
+                :: model.history
         }
       , Cmd.none
       )

@@ -63,7 +63,7 @@ jobs:
       # repeating it on every run would just be noise.
       - if: github.event.action == 'opened'
         run: |
-          gh pr comment "$NUMBER" --body "Playable preview of this branch: ${PAGE_URL}pr/$NUMBER/"
+          gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body "Playable preview of this branch: ${PAGE_URL}pr/$NUMBER/"
         env:
           GH_TOKEN: ${{ github.token }}
           NUMBER: ${{ github.event.number }}

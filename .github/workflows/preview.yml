@@ -49,6 +49,8 @@ jobs:
               curl --silent --show-error --fail --location \
                 --header "Authorization: Bearer $GH_TOKEN" \
                 --output preview.zip "$url"
+              # -d creates the directory but not its parents.
+              mkdir -p "site/pr/$number"
               unzip -q preview.zip -d "site/pr/$number"
               echo "unpacked pr/$number"
             done

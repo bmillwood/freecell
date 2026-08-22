@@ -7,27 +7,32 @@ on:
   # Previews expire with their artifacts rather than being deleted, so there
   # is rarely a reason to run this by hand -- but there's no reason not to.
   workflow_dispatch:
+  # A dry run: assemble the site exactly as a real run would, and stop short
+  # of deploying it. Only worth doing when this file is what changed.
+  pull_request:
+    paths:
+      - .github/workflows/preview.yml
+
+# Listing the artifacts is part of the critical section, so the group covers
+# the whole workflow and not just the deployment: a run that listed before a
+# newer one uploaded would otherwise be able to deploy a site missing that
+# upload, and win by finishing last.
+#
+# Dry runs deploy nothing, so they neither need to wait for that group nor to
+# survive being superseded.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('preview-dry-run-{0}', github.ref) || 'pages' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  deploy:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+  assemble:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash -euo pipefail {0}
-    # Listing the artifacts is part of the critical section: a run that listed
-    # before a newer one uploaded would otherwise be able to deploy a site
-    # missing that upload, and win by finishing last.
-    concurrency:
-      group: pages
-      cancel-in-progress: false
     permissions:
       actions: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     steps:
       # Every deployment is the whole site, rebuilt from whichever previews
@@ -76,9 +81,23 @@ jobs:
             echo '<p>None at the moment.</p>'
           fi
 
+      # A dry run uploads this too, so that what it would have deployed is
+      # there to be downloaded and looked at.
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site
 
+  deploy:
+    needs: assemble
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
       - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
         id: deployment

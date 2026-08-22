@@ -15,9 +15,10 @@ jobs:
     defaults:
       run:
         shell: bash -euo pipefail {0}
-    env:
-      # main goes to the root of the site, pull requests to pr/<number>/
-      dir: ${{ github.event_name == 'pull_request' && format('pr/{0}', github.event.number) || '.' }}
+    permissions:
+      contents: read
+      pages: read
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -28,43 +29,28 @@ jobs:
 
       - run: nix-build
 
-      # Each deployment replaces the entire site, so a preview only exists
-      # until the next one: with two pull requests open, the older preview
-      # 404s rather than serving the wrong game.
-      - run: mkdir -p "site/$dir" && cp result/index.html result/elm.js "site/$dir/"
+      # main is deployed for real from elsewhere, so it only needs the build as
+      # a check. Pull requests additionally hand their build to preview.yml,
+      # which assembles every open preview into one Pages deployment.
+      - if: github.event_name == 'pull_request'
+        # result/ is a symlink into a read-only store, neither of which
+        # survives being zipped up into an artifact.
+        run: cp --no-preserve=mode --recursive --dereference result site
 
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+      - if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          path: site
-
-  # Separate from the build so that the environment's branch policy rejecting
-  # a deployment doesn't also cost us the build result.
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    # A deployment is the whole site, so we want the last one to finish, not
-    # the last one to start. Only the deploys queue: builds can still overlap.
-    concurrency:
-      group: pages
-      cancel-in-progress: false
-    permissions:
-      pages: write
-      id-token: write
-      pull-requests: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-
-    steps:
-      - uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
-        id: deployment
+          name: site-pr-${{ github.event.number }}
+          path: site/
+          retention-days: 14
 
       # Only on opened: the URL doesn't change as the branch is pushed to, so
       # repeating it on every run would just be noise.
       - if: github.event.action == 'opened'
         run: |
-          gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" --body "Playable preview of this branch: ${PAGE_URL}pr/$NUMBER/"
+          page_url=$(gh api "repos/$GITHUB_REPOSITORY/pages" --jq .html_url)
+          gh pr comment "$NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body "Playable preview of this branch: ${page_url}pr/$NUMBER/ (live once the deploy finishes)"
         env:
           GH_TOKEN: ${{ github.token }}
           NUMBER: ${{ github.event.number }}
-          PAGE_URL: ${{ steps.deployment.outputs.page_url }}

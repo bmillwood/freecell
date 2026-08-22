@@ -33,6 +33,7 @@ jobs:
         shell: bash -euo pipefail {0}
     permissions:
       actions: read
+      pull-requests: read
 
     steps:
       # Every deployment is the whole site, rebuilt from whichever previews
@@ -74,12 +75,18 @@ jobs:
             echo '<ul>'
             for dir in site/pr/*/; do
               number=$(basename "$dir")
-              echo "<li><a href=\"pr/$number/\">#$number</a></li>"
+              # A pull request title is written by whoever opened the pull
+              # request, so it reaches this page through @html and not
+              # otherwise.
+              title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" --jq '.title | @html')
+              echo "<li><a href=\"pr/$number/\">#$number</a> $title</li>"
             done
             echo '</ul>'
           else
             echo '<p>None at the moment.</p>'
           fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       # A dry run uploads this too, so that what it would have deployed is
       # there to be downloaded and looked at.

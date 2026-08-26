@@ -199,7 +199,7 @@ view model =
               []
               [ Html.text ("game " ++ String.fromInt current.seed)
               , if Model.isWon game
-                then Html.strong [] [ Html.text " — you win!" ]
+                then Html.strong [] [ Html.text " — complete" ]
                 else if solvedBefore current.seed
                   then Html.text " (solved before)"
                   else Html.text ""

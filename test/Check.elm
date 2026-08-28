@@ -53,7 +53,7 @@ runOfThree =
       |> Array.set 1 [ card Model.Diamonds 7 ]
   }
 
-toCascade1 : Model.FromLocation -> Model.Table -> Maybe (List Model.Table)
+toCascade1 : Model.Grab -> Model.Table -> Maybe (List Model.Table)
 toCascade1 from = Model.performMove from (Model.ToCascade 1)
 
 endsAt : Maybe (List Model.Table) -> Maybe Model.Table
@@ -62,8 +62,12 @@ endsAt = Maybe.andThen (List.foldl (\table _ -> Just table) Nothing)
 cascade : Int -> Model.Table -> List Model.Card
 cascade i table = Array.get i table.cascades |> Maybe.withDefault []
 
-tableOf : Model.Model -> Maybe Model.Table
-tableOf = Model.playing >> Maybe.map .now
+freeCell : Int -> Model.Table -> Maybe Model.Card
+freeCell i table = Array.get i table.freeCells |> Maybe.andThen identity
+
+-- an empty table if there's no game, which no check should be happy with
+tableOf : Model.Model -> Model.Table
+tableOf = Model.playing >> Maybe.map .now >> Maybe.withDefault emptyTable
 
 -- playing one particular game, having got as far as the given table
 atGame : { firstUnsolved : Int, seed : Int } -> Model.Table -> Model.Model
@@ -170,9 +174,9 @@ checks =
     , ok =
         Model.planMove (Model.FromCascade 0 3) (Model.ToCascade 1) runOfThree
           == Just
-              [ { from = Model.FromCascade 0 1, to = Model.ToFreeCell 0 }
-              , { from = Model.FromCascade 0 1, to = Model.ToFreeCell 1 }
-              , { from = Model.FromCascade 0 1, to = Model.ToCascade 1 }
+              [ { from = Model.FromCascade 0 Model.One, to = Model.ToFreeCell 0 }
+              , { from = Model.FromCascade 0 Model.One, to = Model.ToFreeCell 1 }
+              , { from = Model.FromCascade 0 Model.One, to = Model.ToCascade 1 }
               , { from = Model.FromFreeCell 1, to = Model.ToCascade 1 }
               , { from = Model.FromFreeCell 0, to = Model.ToCascade 1 }
               ]
@@ -200,6 +204,28 @@ checks =
                    ]
                 && cascade 0 table == []
                 && table.freeCells == runOfThree.freeCells
+            )
+        |> Maybe.withDefault False
+    }
+  -- the commonest move in the game, and the only check where the cascade a
+  -- card comes from isn't cascade 0
+  , { name = "one card moves from one cascade to another"
+    , ok =
+        let
+          twoCascades =
+            { emptyTable
+            | cascades =
+                Array.repeat 8 []
+                |> Array.set 2 [ card Model.Hearts 5 ]
+                |> Array.set 1 [ card Model.Spades 6 ]
+            }
+        in
+        toCascade1 (Model.FromCascade 2 1) twoCascades
+        |> endsAt
+        |> Maybe.map
+            (\table ->
+              cascade 1 table == [ card Model.Hearts 5, card Model.Spades 6 ]
+                && cascade 2 table == []
             )
         |> Maybe.withDefault False
     }
@@ -255,19 +281,42 @@ checks =
   , { name = "undo takes the cards of a run back one at a time"
     , ok =
         let
-          moved =
+          movedTheRun =
             atGame { firstUnsolved = 0, seed = 0 } runOfThree
             |> Model.updateOne
                 (Model.TryMove (Model.FromCascade 0 3) (Model.ToCascade 1))
             |> Tuple.first
-          steppedBack = undo moved
+          arrived = tableOf movedTheRun
+          steppedBack = tableOf (undo movedTheRun)
         in
-        (tableOf moved |> Maybe.map (cascade 1 >> List.length)) == Just 4
-          && (tableOf steppedBack |> Maybe.map (cascade 1 >> List.length))
-              == Just 3
-          && (tableOf steppedBack
-                |> Maybe.map (.freeCells >> Array.get 0)
-                |> (==) (Just (Just (Just (card Model.Clubs 4)))))
+        List.length (cascade 1 arrived) == 4
+          && List.length (cascade 1 steppedBack) == 3
+          && freeCell 0 steppedBack == Just (card Model.Clubs 4)
+    }
+  -- a foundation only remembers its top card, so taking one back means the
+  -- one beneath it reappears by counting down
+  , { name = "a card comes back off a foundation, and the one beneath shows"
+    , ok =
+        let
+          twoPlayed =
+            { emptyTable
+            | foundations =
+                Array.set 0 (card Model.Spades 2) emptyTable.foundations
+            }
+        in
+        Model.performMove (Model.FromFoundation 0) (Model.ToFreeCell 0) twoPlayed
+        |> endsAt
+        |> Maybe.map
+            (\table ->
+              freeCell 0 table == Just (card Model.Spades 2)
+                && Array.get 0 table.foundations == Just (card Model.Spades 1)
+            )
+        |> Maybe.withDefault False
+    }
+  , { name = "and there's nothing to take off an empty one"
+    , ok =
+        Model.performMove (Model.FromFoundation 2) (Model.ToFreeCell 0) emptyTable
+          == Nothing
     }
   , { name = "undo crosses into the game you left, and says so in the box"
     , ok =

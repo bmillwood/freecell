@@ -91,17 +91,29 @@ initialSequenceLength cards =
       then 1 + initialSequenceLength (c2 :: rest)
       else 1
 
-type FromLocation
+-- Where cards are coming from. The count of them belongs to the cascade case
+-- because a cascade is the only place you can take more than one from, and it
+-- is a parameter so that a move of exactly one card can say so in its type.
+type FromLocation count
   = FromFoundation Int
   | FromFreeCell Int
-  | FromCascade Int Int
+  | FromCascade Int count
+
+-- a count of one, and no other count
+type One = One
+
+-- what the player took hold of: somewhere, and how many cards of it
+type alias Grab = FromLocation Int
+
+-- where a single card is
+type alias Single = FromLocation One
 
 type DropLocation
   = ToFoundation
   | ToFreeCell Int
   | ToCascade Int
 
-dropLocation : FromLocation -> DropLocation
+dropLocation : FromLocation count -> DropLocation
 dropLocation src =
   case src of
     FromFoundation _ -> ToFoundation
@@ -133,7 +145,7 @@ type alias Model =
   -- Nothing until we've dealt a game, which so far means only while we're
   -- asking the player where they'd got to
   , history : Maybe History
-  , drag : Drag.Model FromLocation DropLocation
+  , drag : Drag.Model Grab DropLocation
   , highlightSeq : Bool
   , highlightFoundation : Bool
   , autoMove : AutoMove
@@ -168,22 +180,21 @@ setFirstUnsolved firstUnsolved model =
 tableOfDeck : List Card -> Table
 tableOfDeck cards = { emptyTable | cascades = cascadesOfDeck 8 cards }
 
-type alias DragMsg = Drag.Msg FromLocation DropLocation
+type alias DragMsg = Drag.Msg Grab DropLocation
 
-cardsFromSource : Table -> FromLocation -> List Card
-cardsFromSource table loc =
-  case loc of
-    FromFoundation i ->
-      case Array.get i table.foundations of
-        Nothing -> []
-        Just card ->
-          if card.rank == 0
-          then []
-          else [card]
-    FromFreeCell i ->
-      case Array.get i table.freeCells |> Maybe.andThen identity of
-        Nothing -> []
-        Just card -> [card]
+-- Everywhere but a cascade holds one card at most, so those cases are asking
+-- cardFromSource the same question a step does.
+cardsFromSource : Table -> Grab -> List Card
+cardsFromSource table grab =
+  let
+    justTheOne src =
+      cardFromSource table src
+      |> Maybe.map List.singleton
+      |> Maybe.withDefault []
+  in
+  case grab of
+    FromFoundation i -> justTheOne (FromFoundation i)
+    FromFreeCell i -> justTheOne (FromFreeCell i)
     FromCascade i count ->
       case Array.get i table.cascades of
         Nothing -> []
@@ -195,7 +206,7 @@ type OneMsg
   | NewGameSeed Int
   | AppendTable Table
   | Drag DragMsg
-  | TryMove FromLocation DropLocation
+  | TryMove Grab DropLocation
   | SetHighlightSeq Bool
   | SetHighlightFoundation Bool
   | SetAutoMoveFoundation Bool
@@ -315,7 +326,7 @@ updateTables f model =
         )
     )
 
-allSources : Table -> List (FromLocation, Card)
+allSources : Table -> List (Grab, Card)
 allSources table =
   [ Array.toList table.foundations
     |> List.indexedMap
@@ -397,7 +408,17 @@ init flags =
       , Cmd.none
       )
 
-removeFromSource : FromLocation -> Table -> Table
+-- the one card a step picks up
+cardFromSource : Table -> Single -> Maybe Card
+cardFromSource table src =
+  case src of
+    FromFoundation i ->
+      Array.get i table.foundations
+      |> Maybe.andThen (\card -> if card.rank == 0 then Nothing else Just card)
+    FromFreeCell i -> Array.get i table.freeCells |> Maybe.andThen identity
+    FromCascade i One -> Array.get i table.cascades |> Maybe.andThen List.head
+
+removeFromSource : Single -> Table -> Table
 removeFromSource src table =
   case src of
     FromFoundation i ->
@@ -408,21 +429,29 @@ removeFromSource src table =
           | foundations = Array.set i { f | rank = f.rank - 1 } table.foundations
           }
     FromFreeCell i -> { table | freeCells = Array.set i Nothing table.freeCells }
-    FromCascade i count ->
+    FromCascade i One ->
       case Array.get i table.cascades of
         Nothing -> table
         Just cards ->
-          { table | cascades = Array.set i (List.drop count cards) table.cascades }
+          { table | cascades = Array.set i (List.drop 1 cards) table.cascades }
 
 emptyFreeCells : Table -> List Int
 emptyFreeCells table =
   Array.toIndexedList table.freeCells
   |> List.filterMap (\(i, card) -> if card == Nothing then Just i else Nothing)
 
+-- the grab a step makes: whatever the player took hold of, one card of it
+oneOf : Grab -> Single
+oneOf from =
+  case from of
+    FromFoundation i -> FromFoundation i
+    FromFreeCell i -> FromFreeCell i
+    FromCascade i _ -> FromCascade i One
+
 -- One card going from somewhere to somewhere: the only kind of move that
 -- really happens.
 type alias Step =
-  { from : FromLocation
+  { from : Single
   , to : DropLocation
   }
 
@@ -438,7 +467,7 @@ type alias Step =
 --
 -- Empty cascades could hold cards on the way too, which would make longer runs
 -- moveable than this manages.
-planMove : FromLocation -> DropLocation -> Table -> Maybe (List Step)
+planMove : Grab -> DropLocation -> Table -> Maybe (List Step)
 planMove from to table =
   let
     cards = cardsFromSource table from
@@ -451,9 +480,9 @@ planMove from to table =
       then Nothing
       else
         let
-          stash cell = { from = FromCascade i 1, to = ToFreeCell cell }
+          stash cell = { from = FromCascade i One, to = ToFreeCell cell }
           fetch cell = { from = FromFreeCell cell, to = to }
-          moveTheLast = { from = FromCascade i 1, to = to }
+          moveTheLast = { from = FromCascade i One, to = to }
         in
         Just
           (List.map stash cells
@@ -466,10 +495,10 @@ planMove from to table =
   else
     case (cards, from, to) of
       ([], _, _) -> Nothing
-      ([_], _, _) -> Just [{ from = from, to = to }]
+      ([_], _, _) -> Just [{ from = oneOf from, to = to }]
       (_, FromCascade i _, ToCascade _) -> viaFreeCells i
       (_, FromCascade i _, ToFoundation) ->
-        Just (List.map (always { from = FromCascade i 1, to = to }) cards)
+        Just (List.map (always { from = FromCascade i One, to = to }) cards)
       _ -> Nothing
 
 -- The positions the table passes through, in order, or nothing if a step turns
@@ -485,71 +514,58 @@ runPlan steps table =
         )
 
 -- everything a move the player asked for passes through
-performMove : FromLocation -> DropLocation -> Table -> Maybe (List Table)
+performMove : Grab -> DropLocation -> Table -> Maybe (List Table)
 performMove from to table =
   planMove from to table |> Maybe.andThen (\steps -> runPlan steps table)
 
-tryMove : FromLocation -> DropLocation -> Table -> Maybe Table
+tryMove : Single -> DropLocation -> Table -> Maybe Table
 tryMove src dst table =
-  let
-    moveCards = cardsFromSource table src
-    topCard = List.foldl (always << Just) Nothing moveCards
-  in
   if dropLocation src == dst
   then Nothing
   else
-    case dst of
-      ToFoundation ->
-        let
-          tryFoundation i card maybeUpdated =
-            case Array.get i table.foundations of
-              Nothing -> Nothing
-              Just f ->
-                if card.suit == f.suit && card.rank == f.rank + 1
-                then
-                  Maybe.withDefault table maybeUpdated
-                  |> (\t -> { t | foundations = Array.set i card t.foundations })
-                  |> Just
-                else tryFoundation (i + 1) card maybeUpdated
-        in
-        -- I'm not certain this tries the cards in the "right" order, but
-        -- it shouldn't matter since adjacent cards of the same suit can't
-        -- be part of a moveable stack.
-        List.foldl (tryFoundation 0) Nothing moveCards
-        |> Maybe.map (removeFromSource src)
-      ToFreeCell i ->
-        case (Array.get i table.freeCells, moveCards) of
-          (Just Nothing, [card]) ->
-            { table
-            | freeCells = Array.set i (Just card) table.freeCells
-            } |> removeFromSource src
-              |> Just
-          _ -> Nothing
-      ToCascade i ->
-        case (Array.get i table.cascades, topCard) of
-          (_, Nothing) -> Nothing
-          (Just cascade, Just srcLink) ->
-            let
-              compatible =
-                case List.head cascade of
-                  Nothing -> True
-                  Just dstLink -> sequenceCompatible srcLink dstLink
-            in
-            if compatible
-            then
-              { table
-              | cascades = Array.set i (moveCards ++ cascade) table.cascades
-              } |> removeFromSource src
-                |> Just
-            else Nothing
-          (Nothing, Just _) -> Nothing
+    cardFromSource table src
+    |> Maybe.andThen (\card ->
+        case dst of
+          ToFoundation ->
+            Array.toIndexedList table.foundations
+            |> List.filter
+                (\(_, f) -> card.suit == f.suit && card.rank == f.rank + 1)
+            |> List.head
+            |> Maybe.map
+                (\(i, _) ->
+                  { table | foundations = Array.set i card table.foundations }
+                )
+          ToFreeCell i ->
+            case Array.get i table.freeCells of
+              Just Nothing ->
+                Just
+                  { table | freeCells = Array.set i (Just card) table.freeCells }
+              _ -> Nothing
+          ToCascade i ->
+            Array.get i table.cascades
+            |> Maybe.andThen
+                (\cascade ->
+                  if
+                    List.head cascade
+                    |> Maybe.map (sequenceCompatible card)
+                    |> Maybe.withDefault True
+                  then
+                    Just
+                      { table
+                      | cascades = Array.set i (card :: cascade) table.cascades
+                      }
+                  else Nothing
+                )
+      )
+    |> Maybe.map (removeFromSource src)
 
 type Location
   = Foundation (Maybe Int)
   | FreeCell Int
   | Cascade Int (Maybe Int)
 
-ofFrom : FromLocation -> Location
+-- the count is which card of the cascade, which is how it gets its id
+ofFrom : Grab -> Location
 ofFrom from =
   case from of
     FromFoundation i -> Foundation (Just i)

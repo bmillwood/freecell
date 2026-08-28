@@ -119,11 +119,19 @@ type alias Playing =
   , past : List Game
   }
 
+-- The game we're playing and the ones we dealt before it. Keeping the games
+-- apart rather than in one run of positions is what lets restart find the deal
+-- to go back to; undo crossing the join into the game underneath comes free.
+type alias History =
+  { current : Playing
+  , previous : List Playing
+  }
+
 type alias Model =
   { errors : List String
-  -- a stack of games: starting a new one leaves the old one underneath, so
-  -- undo can take you back to it
-  , history : List Playing
+  -- Nothing until we've dealt a game, which so far means only while we're
+  -- asking the player where they'd got to
+  , history : Maybe History
   , drag : Drag.Model FromLocation DropLocation
   , highlightSeq : Bool
   , highlightFoundation : Bool
@@ -203,7 +211,7 @@ isWon game =
   Array.toList game.foundations |> List.all (\card -> card.rank == 13)
 
 playing : Model -> Maybe Playing
-playing model = List.head model.history
+playing model = Maybe.map .current model.history
 
 -- the box shows the game you're looking at, until you type in it
 showSeed : Model -> Model
@@ -212,21 +220,62 @@ showSeed model =
     Nothing -> model
     Just current -> { model | seedInput = String.fromInt current.seed }
 
-appendGame : Game -> Model -> Model
-appendGame updated model =
-  { model
-  | history =
-      case model.history of
-        [] -> []
-        current :: rest ->
-          { current | now = updated, past = current.now :: current.past }
-          :: rest
+-- a freshly dealt game, with whatever we were playing left underneath it
+startGame : Playing -> Maybe History -> History
+startGame dealt history =
+  { current = dealt
+  , previous =
+      case history of
+        Nothing -> []
+        Just old -> old.current :: old.previous
+  }
+
+-- back one position, or if there aren't any, back to the game we dealt before
+undoHistory : History -> History
+undoHistory history =
+  let
+    current = history.current
+  in
+  case (current.past, history.previous) of
+    (prev :: older, _) ->
+      { history | current = { current | now = prev, past = older } }
+    ([], []) -> history
+    ([], earlier :: rest) -> { current = earlier, previous = rest }
+
+-- back to the deal, keeping where we'd got to so that undo can take it back
+restartHistory : History -> History
+restartHistory history =
+  let
+    current = history.current
+  in
+  case current.past of
+    [] -> history
+    _ ->
+      { current =
+          { current
+          | now = List.foldl (\x a -> x) current.now current.past
+          , past = []
+          }
+      , previous = current :: history.previous
+      }
+
+-- the next position in the game we're playing
+appendGame : Game -> History -> History
+appendGame updated history =
+  let
+    current = history.current
+  in
+  { history
+  | current = { current | now = updated, past = current.now :: current.past }
   }
 
 updateGame : (Game -> Maybe Game) -> Model -> Maybe (Model, Cmd Msg)
 updateGame f model =
-  playing model
-  |> Maybe.andThen (\current ->
+  model.history
+  |> Maybe.andThen (\history ->
+      let
+        current = history.current
+      in
       f current.now
       |> Maybe.map (\newGame ->
           let
@@ -237,7 +286,7 @@ updateGame f model =
               then setFirstUnsolved (current.seed + 1) model
               else (model, Cmd.none)
           in
-          ( appendGame newGame progressed
+          ( { progressed | history = Just (appendGame newGame history) }
           , Cmd.batch
               [ setTouchConfig newGame
               , autoMove model newGame
@@ -303,7 +352,7 @@ init : Json.Decode.Value -> (Model, Cmd Msg)
 init flags =
   let
     noGame =
-      { history = []
+      { history = Nothing
       , errors = []
       , drag = Drag.init
       , highlightSeq = True
@@ -469,15 +518,13 @@ updateOne msg model =
           case model.firstUnsolved of
             Just _ -> (model, Cmd.none)
             Nothing -> setFirstUnsolved seed model
+        dealt = { seed = seed, now = game, past = [] }
       in
-      ( showSeed
-          { based
-          | history = { seed = seed, now = game, past = [] } :: based.history
-          }
+      ( showSeed { based | history = Just (startGame dealt based.history) }
       , Cmd.batch [setTouchConfig game, saveProgress]
       )
     AppendGame game ->
-      ( appendGame game model
+      ( { model | history = Maybe.map (appendGame game) model.history }
       , setTouchConfig game
       )
     RequestNewGame ->
@@ -515,35 +562,11 @@ updateOne msg model =
     SetAutoMoveFoundation to -> ({ model | autoMove = { lowFoundation = to } }, Cmd.none)
     SetSeedInput to -> ({ model | seedInput = to }, Cmd.none)
     Undo ->
-      ( showSeed
-          { model
-          | history = case model.history of
-              [] -> model.history
-              current :: rest ->
-                case (current.past, rest) of
-                  (prev :: past, _) ->
-                    { current | now = prev, past = past } :: rest
-                  -- nothing left to undo in this game: fall back to the one
-                  -- we were playing before, if there is one
-                  ([], []) -> model.history
-                  ([], _ :: _) -> rest
-          }
+      ( showSeed { model | history = Maybe.map undoHistory model.history }
       , Cmd.none
       )
     Restart ->
-      ( { model
-        | history = case model.history of
-            [] -> model.history
-            current :: _ ->
-              if List.isEmpty current.past
-              then model.history
-              else
-                { current
-                | now = List.foldl (\x a -> x) current.now current.past
-                , past = []
-                }
-                :: model.history
-        }
+      ( { model | history = Maybe.map restartHistory model.history }
       , Cmd.none
       )
 

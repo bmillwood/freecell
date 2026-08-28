@@ -154,12 +154,15 @@ port setProgress : Json.Encode.Value -> Cmd msg
 progressDecoder : Json.Decode.Decoder Int
 progressDecoder = Json.Decode.field "firstUnsolved" Json.Decode.int
 
+encodeProgress : Int -> Json.Encode.Value
+encodeProgress firstUnsolved =
+  Json.Encode.object [("firstUnsolved", Json.Encode.int firstUnsolved)]
+
 -- Knowing where the player has got to and remembering it are the same thing.
 setFirstUnsolved : Int -> Model -> (Model, Cmd Msg)
 setFirstUnsolved firstUnsolved model =
   ( { model | firstUnsolved = Just firstUnsolved }
-  , setProgress
-      (Json.Encode.object [("firstUnsolved", Json.Encode.int firstUnsolved)])
+  , setProgress (encodeProgress firstUnsolved)
   )
 
 tableOfDeck : List Card -> Table

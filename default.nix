@@ -11,6 +11,7 @@ stdenv.mkDerivation {
   src = ./.;
   buildInputs = [
     pkgs.elmPackages.elm
+    pkgs.nodejs
   ];
   configurePhase = pkgs.elmPackages.fetchElmDeps {
     elmPackages = import ./elm-srcs.nix;
@@ -21,5 +22,10 @@ stdenv.mkDerivation {
     mkdir "$out"
     cp index.html "$out/"
     elm make --output="$out/elm.js" src/Main.elm
+  '';
+  doCheck = true;
+  checkPhase = ''
+    elm make --output=test/check.js test/Check.elm
+    node test/run.js
   '';
 }

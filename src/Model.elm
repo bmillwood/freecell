@@ -47,14 +47,15 @@ genDeck =
   in
   go allCards []
 
-type alias Game =
+-- everything on the table at one moment
+type alias Table =
   { foundations : Array Card
   , freeCells : Array (Maybe Card)
   , cascades : Array (List Card)
   }
 
-emptyGame : Game
-emptyGame =
+emptyTable : Table
+emptyTable =
   { foundations =
       [Spades, Hearts, Diamonds, Clubs]
         |> List.map (\suit -> { suit = suit, rank = 0 })
@@ -111,20 +112,20 @@ type alias AutoMove =
   { lowFoundation : Bool
   }
 
--- One game, its seed, and the positions we've moved through to get here,
--- most recent first.
-type alias Playing =
+-- A game is a deal, named by the seed it came from, and the positions we've
+-- moved through since, most recent first.
+type alias Game =
   { seed : Int
-  , now : Game
-  , past : List Game
+  , now : Table
+  , past : List Table
   }
 
 -- The game we're playing and the ones we dealt before it. Keeping the games
 -- apart rather than in one run of positions is what lets restart find the deal
 -- to go back to; undo crossing the join into the game underneath comes free.
 type alias History =
-  { current : Playing
-  , previous : List Playing
+  { current : Game
+  , previous : List Game
   }
 
 type alias Model =
@@ -161,27 +162,27 @@ setFirstUnsolved firstUnsolved model =
       (Json.Encode.object [("firstUnsolved", Json.Encode.int firstUnsolved)])
   )
 
-gameOfDeck : List Card -> Game
-gameOfDeck cards = { emptyGame | cascades = cascadesOfDeck 8 cards }
+tableOfDeck : List Card -> Table
+tableOfDeck cards = { emptyTable | cascades = cascadesOfDeck 8 cards }
 
 type alias DragMsg = Drag.Msg FromLocation DropLocation
 
-cardsFromSource : Game -> FromLocation -> List Card
-cardsFromSource game loc =
+cardsFromSource : Table -> FromLocation -> List Card
+cardsFromSource table loc =
   case loc of
     FromFoundation i ->
-      case Array.get i game.foundations of
+      case Array.get i table.foundations of
         Nothing -> []
         Just card ->
           if card.rank == 0
           then []
           else [card]
     FromFreeCell i ->
-      case Array.get i game.freeCells |> Maybe.andThen identity of
+      case Array.get i table.freeCells |> Maybe.andThen identity of
         Nothing -> []
         Just card -> [card]
     FromCascade i count ->
-      case Array.get i game.cascades of
+      case Array.get i table.cascades of
         Nothing -> []
         Just cards -> List.take count cards
 
@@ -189,7 +190,7 @@ type OneMsg
   = AddError String
   | RequestNewGame
   | NewGameSeed Int
-  | AppendGame Game
+  | AppendTable Table
   | Drag DragMsg
   | TryMove FromLocation DropLocation
   | SetHighlightSeq Bool
@@ -204,13 +205,19 @@ type alias Msg = List OneMsg
 -- The game number is the seed: game 0 is the same deal for everyone, forever.
 gameOfSeed : Int -> Game
 gameOfSeed seed =
-  Random.step genDeck (Random.initialSeed seed) |> Tuple.first |> gameOfDeck
+  { seed = seed
+  , now =
+      Random.step genDeck (Random.initialSeed seed)
+      |> Tuple.first
+      |> tableOfDeck
+  , past = []
+  }
 
-isWon : Game -> Bool
-isWon game =
-  Array.toList game.foundations |> List.all (\card -> card.rank == 13)
+isWon : Table -> Bool
+isWon table =
+  Array.toList table.foundations |> List.all (\card -> card.rank == 13)
 
-playing : Model -> Maybe Playing
+playing : Model -> Maybe Game
 playing model = Maybe.map .current model.history
 
 -- the box shows the game you're looking at, until you type in it
@@ -221,7 +228,7 @@ showSeed model =
     Just current -> { model | seedInput = String.fromInt current.seed }
 
 -- a freshly dealt game, with whatever we were playing left underneath it
-startGame : Playing -> Maybe History -> History
+startGame : Game -> Maybe History -> History
 startGame dealt history =
   { current = dealt
   , previous =
@@ -260,8 +267,8 @@ restartHistory history =
       }
 
 -- the next position in the game we're playing
-appendGame : Game -> History -> History
-appendGame updated history =
+appendTable : Table -> History -> History
+appendTable updated history =
   let
     current = history.current
   in
@@ -269,48 +276,48 @@ appendGame updated history =
   | current = { current | now = updated, past = current.now :: current.past }
   }
 
-updateGame : (Game -> Maybe Game) -> Model -> Maybe (Model, Cmd Msg)
-updateGame f model =
+updateTable : (Table -> Maybe Table) -> Model -> Maybe (Model, Cmd Msg)
+updateTable f model =
   model.history
   |> Maybe.andThen (\history ->
       let
         current = history.current
       in
       f current.now
-      |> Maybe.map (\newGame ->
+      |> Maybe.map (\newTable ->
           let
             -- Beating a game we've already beaten, or one beyond the first we
             -- haven't, tells us nothing we aren't already remembering.
             (progressed, saveProgress) =
-              if isWon newGame && model.firstUnsolved == Just current.seed
+              if isWon newTable && model.firstUnsolved == Just current.seed
               then setFirstUnsolved (current.seed + 1) model
               else (model, Cmd.none)
           in
-          ( { progressed | history = Just (appendGame newGame history) }
+          ( { progressed | history = Just (appendTable newTable history) }
           , Cmd.batch
-              [ setTouchConfig newGame
-              , autoMove model newGame
+              [ setTouchConfig newTable
+              , autoMove model newTable
               , saveProgress
               ]
           )
         )
     )
 
-allSources : Game -> List (FromLocation, Card)
-allSources game =
-  [ Array.toList game.foundations
+allSources : Table -> List (FromLocation, Card)
+allSources table =
+  [ Array.toList table.foundations
     |> List.indexedMap
         (\i c -> if c.rank > 0 then Just (FromFoundation i, c) else Nothing)
-  , Array.toList game.freeCells
+  , Array.toList table.freeCells
     |> List.indexedMap
        (\i mc -> mc |> Maybe.map (\c -> (FromFreeCell i, c)))
-  , Array.toList (Array.map List.head game.cascades)
+  , Array.toList (Array.map List.head table.cascades)
     |> List.indexedMap
        (\i mc -> mc |> Maybe.map (\c -> (FromCascade i 1, c)))
   ] |> List.concat |> List.filterMap identity
 
-autoMove : Model -> Game -> Cmd Msg
-autoMove model game =
+autoMove : Model -> Table -> Cmd Msg
+autoMove model table =
   if not model.autoMove.lowFoundation
   then Cmd.none
   else
@@ -322,11 +329,11 @@ autoMove model game =
         |> Maybe.withDefault 0
         |> \current -> current + 1
       (nextRed, nextBlack) =
-        List.partition (\c -> isRed c.suit) (Array.toList game.foundations)
+        List.partition (\c -> isRed c.suit) (Array.toList table.foundations)
         |> \(rf, bf) -> (nextRank rf, nextRank bf)
       canAuto card =
         List.any (\f -> card.suit == f.suit && card.rank == f.rank + 1)
-          (Array.toList game.foundations)
+          (Array.toList table.foundations)
       shouldAuto card =
         card.rank <= min
           (1 + if isRed card.suit then nextBlack else nextRed)
@@ -336,7 +343,7 @@ autoMove model game =
         then [TryMove src ToFoundation]
         else []
     in
-    List.concatMap tryAuto (allSources game)
+    List.concatMap tryAuto (allSources table)
     |> Task.succeed >> Task.perform identity
 
 -- The flags are whatever was in storage, as a string, or null for a first
@@ -378,54 +385,54 @@ init flags =
       , Cmd.none
       )
 
-removeFromSource : FromLocation -> Game -> Game
-removeFromSource src game =
+removeFromSource : FromLocation -> Table -> Table
+removeFromSource src table =
   case src of
     FromFoundation i ->
-      case Array.get i game.foundations of
-        Nothing -> game
+      case Array.get i table.foundations of
+        Nothing -> table
         Just f ->
-          { game
-          | foundations = Array.set i { f | rank = f.rank - 1 } game.foundations
+          { table
+          | foundations = Array.set i { f | rank = f.rank - 1 } table.foundations
           }
-    FromFreeCell i -> { game | freeCells = Array.set i Nothing game.freeCells }
+    FromFreeCell i -> { table | freeCells = Array.set i Nothing table.freeCells }
     FromCascade i count ->
-      case Array.get i game.cascades of
-        Nothing -> game
+      case Array.get i table.cascades of
+        Nothing -> table
         Just cards ->
-          { game | cascades = Array.set i (List.drop count cards) game.cascades }
+          { table | cascades = Array.set i (List.drop count cards) table.cascades }
 
 -- should count empty cascades too
-numEmptyFreeCells : Game -> Int
-numEmptyFreeCells game =
+numEmptyFreeCells : Table -> Int
+numEmptyFreeCells table =
   let
     f fc acc =
       case fc of
         Just _ -> acc
         Nothing -> acc + 1
   in
-  Array.foldl f 0 game.freeCells
+  Array.foldl f 0 table.freeCells
 
-tryMove : FromLocation -> DropLocation -> Game -> Maybe Game
-tryMove src dst game =
+tryMove : FromLocation -> DropLocation -> Table -> Maybe Table
+tryMove src dst table =
   let
-    moveCards = cardsFromSource game src
+    moveCards = cardsFromSource table src
     topCard = List.foldl (always << Just) Nothing moveCards
   in
-  if dropLocation src == dst || List.length moveCards > numEmptyFreeCells game + 1
+  if dropLocation src == dst || List.length moveCards > numEmptyFreeCells table + 1
   then Nothing
   else
     case dst of
       ToFoundation ->
         let
           tryFoundation i card maybeUpdated =
-            case Array.get i game.foundations of
+            case Array.get i table.foundations of
               Nothing -> Nothing
               Just f ->
                 if card.suit == f.suit && card.rank == f.rank + 1
                 then
-                  Maybe.withDefault game maybeUpdated
-                  |> (\g -> { g | foundations = Array.set i card g.foundations })
+                  Maybe.withDefault table maybeUpdated
+                  |> (\t -> { t | foundations = Array.set i card t.foundations })
                   |> Just
                 else tryFoundation (i + 1) card maybeUpdated
         in
@@ -435,15 +442,15 @@ tryMove src dst game =
         List.foldl (tryFoundation 0) Nothing moveCards
         |> Maybe.map (removeFromSource src)
       ToFreeCell i ->
-        case (Array.get i game.freeCells, moveCards) of
+        case (Array.get i table.freeCells, moveCards) of
           (Just Nothing, [card]) ->
-            { game
-            | freeCells = Array.set i (Just card) game.freeCells
+            { table
+            | freeCells = Array.set i (Just card) table.freeCells
             } |> removeFromSource src
               |> Just
           _ -> Nothing
       ToCascade i ->
-        case (Array.get i game.cascades, topCard) of
+        case (Array.get i table.cascades, topCard) of
           (_, Nothing) -> Nothing
           (Just cascade, Just srcLink) ->
             let
@@ -454,8 +461,8 @@ tryMove src dst game =
             in
             if compatible
             then
-              { game
-              | cascades = Array.set i (moveCards ++ cascade) game.cascades
+              { table
+              | cascades = Array.set i (moveCards ++ cascade) table.cascades
               } |> removeFromSource src
                 |> Just
             else Nothing
@@ -489,18 +496,18 @@ idForLocation loc =
     Cascade i Nothing -> "c" ++ String.fromInt i
     Cascade i (Just c) -> "c" ++ String.fromInt i ++ "-" ++ String.fromInt c
 
-allDropLocations : Game -> List DropLocation
-allDropLocations game =
+allDropLocations : Table -> List DropLocation
+allDropLocations table =
   [ [ ToFoundation ]
-  , List.indexedMap (\i _ -> ToFreeCell i) (Array.toList game.freeCells)
-  , List.indexedMap (\i _ -> ToCascade i) (Array.toList game.cascades)
+  , List.indexedMap (\i _ -> ToFreeCell i) (Array.toList table.freeCells)
+  , List.indexedMap (\i _ -> ToCascade i) (Array.toList table.cascades)
   ] |> List.concat
 
-setTouchConfig : Game -> Cmd Msg
-setTouchConfig game =
+setTouchConfig : Table -> Cmd Msg
+setTouchConfig table =
   let
     allTargetIds =
-      List.map (\l -> (idForLocation (ofDrop l), l)) (allDropLocations game)
+      List.map (\l -> (idForLocation (ofDrop l), l)) (allDropLocations table)
   in
   Drag.setTouchConfig { allTargetIds = allTargetIds }
   |> Cmd.map (List.singleton << Drag)
@@ -511,21 +518,20 @@ updateOne msg model =
     AddError new -> ({ model | errors = new :: model.errors }, Cmd.none)
     NewGameSeed seed ->
       let
-        game = gameOfSeed seed
+        dealt = gameOfSeed seed
         -- If we couldn't read where the player had got to, the game they pick
         -- is our new answer.
         (based, saveProgress) =
           case model.firstUnsolved of
             Just _ -> (model, Cmd.none)
             Nothing -> setFirstUnsolved seed model
-        dealt = { seed = seed, now = game, past = [] }
       in
       ( showSeed { based | history = Just (startGame dealt based.history) }
-      , Cmd.batch [setTouchConfig game, saveProgress]
+      , Cmd.batch [setTouchConfig dealt.now, saveProgress]
       )
-    AppendGame game ->
-      ( { model | history = Maybe.map (appendGame game) model.history }
-      , setTouchConfig game
+    AppendTable table ->
+      ( { model | history = Maybe.map (appendTable table) model.history }
+      , setTouchConfig table
       )
     RequestNewGame ->
       case String.toInt (String.trim model.seedInput) of
@@ -555,7 +561,7 @@ updateOne msg model =
           _ -> Cmd.none
       )
     TryMove from to ->
-      updateGame (tryMove from to) model
+      updateTable (tryMove from to) model
       |> Maybe.withDefault (model, Cmd.none)
     SetHighlightSeq to -> ({ model | highlightSeq = to }, Cmd.none)
     SetHighlightFoundation to -> ({ model | highlightFoundation = to }, Cmd.none)

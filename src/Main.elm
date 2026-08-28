@@ -216,8 +216,8 @@ view model =
               [ Events.onClick [Model.Undo] ]
               [ Html.text "undo" ]
           ]
-      , Html.div
-          []
+      , Html.form
+          [ Events.onSubmit [Model.RequestNewGame] ]
           [ Html.label
               [ Attributes.for "seed" ]
               [ Html.text "game:" ]

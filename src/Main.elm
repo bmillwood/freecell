@@ -40,11 +40,11 @@ view : Model -> Browser.Document Msg
 view model =
   let
     playing = Model.playing model
-    game = Maybe.map .now playing |> Maybe.withDefault Model.emptyGame
+    table = Maybe.map .now playing |> Maybe.withDefault Model.emptyTable
     solvedBefore seed =
       Maybe.map (\firstUnsolved -> seed < firstUnsolved) model.firstUnsolved
       |> Maybe.withDefault False
-    { foundations, freeCells, cascades } = game
+    { foundations, freeCells, cascades } = table
     locations src = (src, Model.ofFrom src, Model.dropLocation src)
     targetAttrs loc =
       [ if Drag.over model.drag == Just loc
@@ -57,7 +57,7 @@ view model =
       if model.highlightFoundation
       then
         let acceptsMe t = t.suit == card.suit && t.rank == card.rank - 1 in
-        if Array.isEmpty (Array.filter acceptsMe game.foundations)
+        if Array.isEmpty (Array.filter acceptsMe table.foundations)
         then []
         else [ Attributes.class "canFoundation" ]
       else []
@@ -113,7 +113,7 @@ view model =
     cardsFromSource =
       case Drag.held model.drag of
         Nothing -> []
-        Just held -> Model.cardsFromSource game held
+        Just held -> Model.cardsFromSource table held
     ghostCard c =
       Html.span
         (cardAttrs ++ [ Attributes.class "ghost" ])
@@ -198,7 +198,7 @@ view model =
             Html.p
               []
               [ Html.text ("game " ++ String.fromInt current.seed)
-              , if Model.isWon game
+              , if Model.isWon table
                 then Html.strong [] [ Html.text " — complete" ]
                 else if solvedBefore current.seed
                   then Html.text " (solved before)"

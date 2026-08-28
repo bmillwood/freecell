@@ -279,30 +279,39 @@ appendTable updated history =
   | current = { current | now = updated, past = current.now :: current.past }
   }
 
-updateTable : (Table -> Maybe Table) -> Model -> Maybe (Model, Cmd Msg)
-updateTable f model =
+-- One thing the player did, which may be several positions: each is kept, so
+-- undo takes the cards back one at a time. Making undo treat the run as one
+-- move would be a matter of appending it as one rather than folding it in.
+updateTables : (Table -> Maybe (List Table)) -> Model -> Maybe (Model, Cmd Msg)
+updateTables f model =
   model.history
   |> Maybe.andThen (\history ->
       let
         current = history.current
       in
       f current.now
-      |> Maybe.map (\newTable ->
-          let
-            -- Beating a game we've already beaten, or one beyond the first we
-            -- haven't, tells us nothing we aren't already remembering.
-            (progressed, saveProgress) =
-              if isWon newTable && model.firstUnsolved == Just current.seed
-              then setFirstUnsolved (current.seed + 1) model
-              else (model, Cmd.none)
-          in
-          ( { progressed | history = Just (appendTable newTable history) }
-          , Cmd.batch
-              [ setTouchConfig newTable
-              , autoMove model newTable
-              , saveProgress
-              ]
-          )
+      |> Maybe.andThen (\tables ->
+          case tables of
+            [] -> Nothing
+            _ ->
+              let
+                moved = List.foldl appendTable history tables
+                ended = moved.current.now
+                -- Beating a game we've already beaten, or one beyond the first
+                -- we haven't, tells us nothing we aren't already remembering.
+                (progressed, saveProgress) =
+                  if isWon ended && model.firstUnsolved == Just current.seed
+                  then setFirstUnsolved (current.seed + 1) model
+                  else (model, Cmd.none)
+              in
+              Just
+                ( { progressed | history = Just moved }
+                , Cmd.batch
+                    [ setTouchConfig ended
+                    , autoMove model ended
+                    , saveProgress
+                    ]
+                )
         )
     )
 
@@ -405,16 +414,80 @@ removeFromSource src table =
         Just cards ->
           { table | cascades = Array.set i (List.drop count cards) table.cascades }
 
--- should count empty cascades too
-numEmptyFreeCells : Table -> Int
-numEmptyFreeCells table =
+emptyFreeCells : Table -> List Int
+emptyFreeCells table =
+  Array.toIndexedList table.freeCells
+  |> List.filterMap (\(i, card) -> if card == Nothing then Just i else Nothing)
+
+-- One card going from somewhere to somewhere: the only kind of move that
+-- really happens.
+type alias Step =
+  { from : FromLocation
+  , to : DropLocation
+  }
+
+-- What the player asks for isn't always a single move. Moving a run of cards
+-- to another cascade means sending all but the last out to the free cells and
+-- fetching them back, and dropping a run on the foundations means playing the
+-- cards one at a time. Working out those steps rather than lifting the run in
+-- one go is what makes the free cells' part in it something we can show, check
+-- and take back.
+--
+-- Just means we found a way to break the move up, not that the way works:
+-- whether each step of it is legal is runPlan's business.
+--
+-- Empty cascades could hold cards on the way too, which would make longer runs
+-- moveable than this manages.
+planMove : FromLocation -> DropLocation -> Table -> Maybe (List Step)
+planMove from to table =
   let
-    f fc acc =
-      case fc of
-        Just _ -> acc
-        Nothing -> acc + 1
+    cards = cardsFromSource table from
+    -- moving a run of n cards needs somewhere to put n - 1 of them
+    viaFreeCells i =
+      let
+        cells = emptyFreeCells table |> List.take (List.length cards - 1)
+      in
+      if List.length cells < List.length cards - 1
+      then Nothing
+      else
+        let
+          stash cell = { from = FromCascade i 1, to = ToFreeCell cell }
+          fetch cell = { from = FromFreeCell cell, to = to }
+          moveTheLast = { from = FromCascade i 1, to = to }
+        in
+        Just
+          (List.map stash cells
+            ++ moveTheLast
+            :: List.map fetch (List.reverse cells)
+          )
   in
-  Array.foldl f 0 table.freeCells
+  if dropLocation from == to
+  then Nothing
+  else
+    case (cards, from, to) of
+      ([], _, _) -> Nothing
+      ([_], _, _) -> Just [{ from = from, to = to }]
+      (_, FromCascade i _, ToCascade _) -> viaFreeCells i
+      (_, FromCascade i _, ToFoundation) ->
+        Just (List.map (always { from = FromCascade i 1, to = to }) cards)
+      _ -> Nothing
+
+-- The positions the table passes through, in order, or nothing if a step turns
+-- out to be illegal after all: a plan is a proposal, not a promise.
+runPlan : List Step -> Table -> Maybe (List Table)
+runPlan steps table =
+  case steps of
+    [] -> Just []
+    step :: rest ->
+      tryMove step.from step.to table
+      |> Maybe.andThen (\stepped ->
+          runPlan rest stepped |> Maybe.map ((::) stepped)
+        )
+
+-- everything a move the player asked for passes through
+performMove : FromLocation -> DropLocation -> Table -> Maybe (List Table)
+performMove from to table =
+  planMove from to table |> Maybe.andThen (\steps -> runPlan steps table)
 
 tryMove : FromLocation -> DropLocation -> Table -> Maybe Table
 tryMove src dst table =
@@ -422,7 +495,7 @@ tryMove src dst table =
     moveCards = cardsFromSource table src
     topCard = List.foldl (always << Just) Nothing moveCards
   in
-  if dropLocation src == dst || List.length moveCards > numEmptyFreeCells table + 1
+  if dropLocation src == dst
   then Nothing
   else
     case dst of
@@ -564,7 +637,7 @@ updateOne msg model =
           _ -> Cmd.none
       )
     TryMove from to ->
-      updateTable (tryMove from to) model
+      updateTables (performMove from to) model
       |> Maybe.withDefault (model, Cmd.none)
     SetHighlightSeq to -> ({ model | highlightSeq = to }, Cmd.none)
     SetHighlightFoundation to -> ({ model | highlightFoundation = to }, Cmd.none)

@@ -5,17 +5,18 @@
 let
   pkgs = import nixpkgs config;
   inherit (pkgs) stdenv;
+  elm = pkgs.elmPackages.elm;
 in
 stdenv.mkDerivation {
   name = "freecell";
   src = ./.;
   buildInputs = [
-    pkgs.elmPackages.elm
+    elm
     pkgs.nodejs
   ];
   configurePhase = pkgs.elmPackages.fetchElmDeps {
     elmPackages = import ./elm-srcs.nix;
-    elmVersion = "0.19.1";
+    elmVersion = elm.version;
     registryDat = ./registry.dat;
   };
   buildPhase = ''

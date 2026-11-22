@@ -33,15 +33,10 @@ jobs:
       # a check. Pull requests additionally hand their build to preview.yml,
       # which assembles every open preview into one Pages deployment.
       - if: github.event_name == 'pull_request'
-        # result/ is a symlink into a read-only store, neither of which
-        # survives being zipped up into an artifact.
-        run: cp --no-preserve=mode --recursive --dereference result site
-
-      - if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: site-pr-${{ github.event.number }}
-          path: site/
+          path: result
           retention-days: 14
 
       # Only on opened: the URL doesn't change as the branch is pushed to, so

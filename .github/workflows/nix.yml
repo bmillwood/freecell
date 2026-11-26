@@ -11,6 +11,8 @@ env:
 
 jobs:
   build:
+    # this environment contains the cachix signing key and auth token
+    environment: ${{ github.ref == 'refs/heads/main' && 'default-branch' || '' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -26,6 +28,13 @@ jobs:
       - uses: cachix/install-nix-action@bb0495a1086c46893eee56f32fd192dfe4a15bb9 # v32.0.0
         with:
           nix_path: nixpkgs=https://github.com/NixOS/nixpkgs/archive/${{ env.nixpkgs_version }}.tar.gz
+
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: bmillwood
+          # if not on the env with these secrets, they'll just be empty, which is fine
+          signingKey: ${{ secrets.CACHIX_SIGNING_KEY }}
+          authToken: ${{ secrets.CACHIX_AUTH_TOKEN }}
 
       - run: nix-build
 
